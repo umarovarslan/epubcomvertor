@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: epub-pdf-converter
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn wsgi:app"
+    plan: free
