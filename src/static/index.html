@@ -15,6 +15,8 @@
             --primary-color-dark: #4f46e5;
             --secondary-color: #10b981;
             --secondary-color-dark: #059669;
+            --accent-color: #f59e0b;
+            --accent-color-dark: #d97706;
             --bg-color: #f8fafc;
             --card-bg-color: #ffffff;
             --text-color: #334155;
@@ -115,7 +117,7 @@
             font-size: 0.875rem;
         }
 
-        .form-group input[type="url"] {
+        .form-group input[type="url"], .form-group input[type="email"] {
             padding: 0.75rem 1rem;
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
@@ -125,7 +127,7 @@
             background: var(--bg-color);
         }
 
-        .form-group input[type="url"]:focus {
+        .form-group input[type="url"]:focus, .form-group input[type="email"]:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
@@ -193,7 +195,7 @@
         .action-button {
             width: 100%;
             padding: 1rem;
-            color: var(--white);
+            color: white;
             border: none;
             border-radius: var(--radius-md);
             font-size: 1rem;
@@ -204,10 +206,12 @@
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
+            margin-bottom: 1rem;
         }
 
         .action-button svg {
-            width: 1.25rem; height: 1.25rem;
+            width: 1.25rem; 
+            height: 1.25rem;
         }
 
         .action-button:disabled {
@@ -215,13 +219,26 @@
             cursor: not-allowed;
         }
 
-        #convertButton {
-            background-color: var(--primary-color);
-            margin-top: 1rem;
+        .action-button:last-child {
+            margin-bottom: 0;
         }
 
-        #convertButton:hover:not(:disabled) {
+        #convertDownloadButton {
+            background-color: var(--primary-color);
+        }
+
+        #convertDownloadButton:hover:not(:disabled) {
             background-color: var(--primary-color-dark);
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-2px);
+        }
+
+        #convertEmailButton {
+            background-color: var(--accent-color);
+        }
+
+        #convertEmailButton:hover:not(:disabled) {
+            background-color: var(--accent-color-dark);
             box-shadow: var(--shadow-lg);
             transform: translateY(-2px);
         }
@@ -242,7 +259,7 @@
             width: 20px;
             height: 20px;
             border: 3px solid rgba(255, 255, 255, 0.3);
-            border-top-color: var(--white);
+            border-top-color: white;
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -284,7 +301,7 @@
         }
 
         .status-log {
-            background: var(--white);
+            background: white;
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
             padding: 1rem;
@@ -310,12 +327,13 @@
             width: 100%;
             padding: 1rem;
             background-color: var(--success-color);
-            color: var(--white);
+            color: white;
             text-decoration: none;
             border-radius: var(--radius-md);
             font-weight: 600;
             font-size: 1rem;
             transition: all 0.2s ease-out;
+            margin-bottom: 1rem;
         }
 
         .download-button:hover {
@@ -343,12 +361,73 @@
             border-color: #86efac;
         }
 
+        .info-message {
+            background-color: #eff6ff;
+            color: #1d4ed8;
+            border-color: #93c5fd;
+        }
+
+        .page-count-display {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            text-align: center;
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
+            display: none;
+        }
+
+        .page-count-display.show {
+            display: block;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .email-status {
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 1rem;
+            font-weight: 500;
+            display: none;
+        }
+
+        .email-status.success {
+            background-color: #f0fdf4;
+            color: #15803d;
+            border: 1px solid #86efac;
+        }
+
+        .email-status.error {
+            background-color: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        .email-status.show {
+            display: block;
+        }
+
         @media (min-width: 768px) {
             .grid-2-cols {
                 grid-template-columns: 1fr 1fr;
             }
             .grid-3-cols {
                 grid-template-columns: repeat(3, 1fr);
+            }
+            .button-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+            }
+            .button-grid .action-button {
+                margin-bottom: 0;
             }
         }
         
@@ -379,6 +458,18 @@
                         <div class="form-group">
                             <label for="epubUrl">EPUB URL *</label>
                             <input type="url" id="epubUrl" name="epub_url" required placeholder="https://example.com/book.epub" value="https://flibusta.is/b/416925/epub">
+                        </div>
+                    </section>
+
+                    <section class="form-section">
+                        <h3 class="form-section-header">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                            <span>Email Delivery (Optional)</span>
+                        </h3>
+                        <div class="form-group">
+                            <label for="recipientEmail">Email Address</label>
+                            <input type="email" id="recipientEmail" name="recipient_email" placeholder="your-email@example.com" value="mr.umaroff@gmail.com">
+                            <small style="color: var(--text-light-color); font-size: 0.8rem; margin-top: 0.25rem;">Leave empty to skip email delivery</small>
                         </div>
                     </section>
 
@@ -443,11 +534,19 @@
                     
                     <div id="messagesContainer"></div>
 
-                    <button type="submit" class="action-button" id="convertButton">
-                        <span class="spinner" id="spinner"></span>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75l3 3m0 0l3-3m-3 3v-7.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        <span id="buttonText">Convert to PDF</span>
-                    </button>
+                    <div class="button-grid">
+                        <button type="button" class="action-button" id="convertDownloadButton">
+                            <span class="spinner" id="downloadSpinner"></span>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                            <span id="downloadButtonText">Convert & Download</span>
+                        </button>
+
+                        <button type="button" class="action-button" id="convertEmailButton">
+                            <span class="spinner" id="emailSpinner"></span>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                            <span id="emailButtonText">Convert & Email</span>
+                        </button>
+                    </div>
                 </form>
             </main>
 
@@ -459,6 +558,15 @@
                     <div class="progress-text" id="progressText" aria-live="polite">Starting...</div>
                 </div>
                 <div class="status-log" id="statusLog" aria-live="polite"></div>
+                
+                <div class="page-count-display" id="pageCountDisplay">
+                    📄 PDF contains <span id="pageCountNumber">0</span> pages
+                </div>
+
+                <div class="email-status" id="emailStatus">
+                    <span id="emailStatusText"></span>
+                </div>
+
                 <div class="download-section" id="downloadSection" style="display: none;">
                     <a href="#" class="download-button" id="downloadButton" download>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
@@ -478,13 +586,17 @@
             constructor() {
                 this.conversionId = null;
                 this.statusInterval = null;
+                this.currentConversionType = null; // 'download' or 'email'
                 this.dom = {
                     form: document.getElementById('conversionForm'),
                     formContainer: document.getElementById('formContainer'),
-                    convertButton: document.getElementById('convertButton'),
+                    convertDownloadButton: document.getElementById('convertDownloadButton'),
+                    convertEmailButton: document.getElementById('convertEmailButton'),
                     resetButton: document.getElementById('resetButton'),
-                    spinner: document.getElementById('spinner'),
-                    buttonText: document.getElementById('buttonText'),
+                    downloadSpinner: document.getElementById('downloadSpinner'),
+                    emailSpinner: document.getElementById('emailSpinner'),
+                    downloadButtonText: document.getElementById('downloadButtonText'),
+                    emailButtonText: document.getElementById('emailButtonText'),
                     statusSection: document.getElementById('statusSection'),
                     progressFill: document.getElementById('progressFill'),
                     progressText: document.getElementById('progressText'),
@@ -492,6 +604,11 @@
                     downloadSection: document.getElementById('downloadSection'),
                     downloadButton: document.getElementById('downloadButton'),
                     messagesContainer: document.getElementById('messagesContainer'),
+                    pageCountDisplay: document.getElementById('pageCountDisplay'),
+                    pageCountNumber: document.getElementById('pageCountNumber'),
+                    emailStatus: document.getElementById('emailStatus'),
+                    emailStatusText: document.getElementById('emailStatusText'),
+                    recipientEmail: document.getElementById('recipientEmail'),
                     sliders: {
                         fontSize: { input: document.getElementById('fontSize'), output: document.getElementById('fontSizeValue'), unit: ' pt' },
                         lineSpacing: { input: document.getElementById('lineSpacing'), output: document.getElementById('lineSpacingValue'), unit: 'x', decimals: 1 },
@@ -505,11 +622,8 @@
             }
 
             initializeEventListeners() {
-                this.dom.form.addEventListener('submit', e => {
-                    e.preventDefault();
-                    this.startConversion();
-                });
-
+                this.dom.convertDownloadButton.addEventListener('click', () => this.startConversion('download'));
+                this.dom.convertEmailButton.addEventListener('click', () => this.startConversion('email'));
                 this.dom.resetButton.addEventListener('click', () => this.resetUI());
 
                 Object.values(this.dom.sliders).forEach(slider => {
@@ -531,13 +645,17 @@
                 this.dom.statusSection.classList.remove('show');
                 this.dom.downloadSection.style.display = 'none';
                 this.dom.resetButton.style.display = 'none';
-                this.dom.convertButton.style.display = 'flex';
+                this.dom.convertDownloadButton.style.display = 'flex';
+                this.dom.convertEmailButton.style.display = 'flex';
+                this.dom.pageCountDisplay.classList.remove('show');
+                this.dom.emailStatus.classList.remove('show');
                 this.removeMessages();
-                this.dom.form.reset();
                 this.updateAllSliderValues();
+                this.currentConversionType = null;
             }
 
-            async startConversion() {
+            async startConversion(type) {
+                this.currentConversionType = type;
                 const formData = new FormData(this.dom.form);
                 const data = Object.fromEntries(formData.entries());
 
@@ -546,8 +664,19 @@
                     return;
                 }
 
+                // Validate email if email conversion is requested
+                if (type === 'email') {
+                    if (!data.recipient_email || !this.isValidEmail(data.recipient_email)) {
+                        this.showMessage('Please provide a valid email address for email delivery.', 'error');
+                        return;
+                    }
+                    data.send_email = true;
+                } else {
+                    data.send_email = false;
+                }
+
                 try {
-                    this.setConvertingState(true);
+                    this.setConvertingState(true, type);
                     this.dom.formContainer.style.display = 'none';
                     this.dom.statusSection.classList.add('show');
                     this.logStatus('🚀 Starting conversion...', true);
@@ -570,7 +699,7 @@
                     this.startStatusPolling();
 
                 } catch (error) {
-                    this.setConvertingState(false);
+                    this.setConvertingState(false, type);
                     this.dom.formContainer.style.display = 'block';
                     this.dom.statusSection.classList.remove('show');
                     this.showMessage(`Failed to start conversion: ${error.message}`, 'error');
@@ -615,7 +744,27 @@
                 this.stopStatusPolling();
                 this.updateProgress(100, 'Conversion successful!');
                 this.logStatus('🎉 PDF generated! Ready for download.');
-                this.showDownloadButton();
+                
+                // Display page count
+                if (status.page_count && status.page_count > 0) {
+                    this.dom.pageCountNumber.textContent = status.page_count;
+                    this.dom.pageCountDisplay.classList.add('show');
+                }
+
+                // Handle email status
+                if (status.email_status) {
+                    const emailClass = status.email_status.success ? 'success' : 'error';
+                    const emailIcon = status.email_status.success ? '✅' : '❌';
+                    this.dom.emailStatusText.textContent = `${emailIcon} ${status.email_status.message}`;
+                    this.dom.emailStatus.className = `email-status ${emailClass} show`;
+                }
+
+                // Show download button only for download conversions or if email failed
+                if (this.currentConversionType === 'download' || 
+                    (status.email_status && !status.email_status.success)) {
+                    this.showDownloadButton();
+                }
+
                 this.dom.resetButton.style.display = 'flex';
             }
 
@@ -624,11 +773,28 @@
                 this.dom.downloadSection.style.display = 'block';
             }
 
-            setConvertingState(isConverting) {
-                this.dom.convertButton.disabled = isConverting;
-                this.dom.spinner.style.display = isConverting ? 'inline-block' : 'none';
-                this.dom.buttonText.textContent = isConverting ? 'Converting...' : 'Convert to PDF';
-                if (isConverting) this.removeMessages();
+            setConvertingState(isConverting, type) {
+                const button = type === 'email' ? this.dom.convertEmailButton : this.dom.convertDownloadButton;
+                const otherButton = type === 'email' ? this.dom.convertDownloadButton : this.dom.convertEmailButton;
+                const spinner = type === 'email' ? this.dom.emailSpinner : this.dom.downloadSpinner;
+                const buttonText = type === 'email' ? this.dom.emailButtonText : this.dom.downloadButtonText;
+                
+                button.disabled = isConverting;
+                otherButton.disabled = isConverting;
+                spinner.style.display = isConverting ? 'inline-block' : 'none';
+                
+                if (type === 'email') {
+                    buttonText.textContent = isConverting ? 'Converting & Emailing...' : 'Convert & Email';
+                } else {
+                    buttonText.textContent = isConverting ? 'Converting...' : 'Convert & Download';
+                }
+                
+                if (isConverting) {
+                    this.removeMessages();
+                    otherButton.style.display = 'none';
+                } else {
+                    otherButton.style.display = 'flex';
+                }
             }
 
             updateProgress(progress, message) {
@@ -660,6 +826,11 @@
                 } catch (_) {
                     return false;
                 }
+            }
+
+            isValidEmail(email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailRegex.test(email);
             }
 
             removeMessages() {
