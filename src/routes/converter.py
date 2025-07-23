@@ -7,6 +7,11 @@ import tempfile
 import io
 import threading
 import uuid
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file
 from ebooklib import epub, ITEM_DOCUMENT, ITEM_IMAGE
@@ -22,6 +27,7 @@ from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+import PyPDF2
 
 converter_bp = Blueprint('converter', __name__)
 
@@ -104,6 +110,115 @@ class EpubToPdfConverter:
             if os.path.exists(path):
                 return path
         return None
+
+    def count_pdf_pages(self, pdf_path):
+        """Count the number of pages in a PDF file"""
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                return len(pdf_reader.pages)
+        except Exception as e:
+            print(f"Error counting PDF pages: {e}")
+            return 0
+
+    def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count):
+        """Send PDF via email"""
+        try:
+            # Email configuration - using Gmail SMTP as example
+            # In production, these should be environment variables
+            smtp_server = "smtp.gmail.com"
+            smtp_port = 587
+            sender_email = "your-email@gmail.com"  # Replace with actual sender email
+            sender_password = "your-app-password"  # Replace with actual app password
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = recipient_email
+            msg['Subject'] = f"Your converted PDF: {book_title}"
+            
+            # Email body
+            body = f"""
+Hello!
+
+Your EPUB to PDF conversion is complete!
+
+Book Title: {book_title}
+Total Pages: {page_count}
+
+Please find the converted PDF attached to this email.
+
+Best regards,
+EPUB to PDF Converter
+            """
+            
+            msg.attach(MIMEText(body, 'plain'))
+            
+            # Attach PDF
+            with open(pdf_path, 'rb') as f:
+                pdf_attachment = MIMEApplication(f.read(), _subtype='pdf')
+                safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
+                pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f"{safe_title}.pdf")
+                msg.attach(pdf_attachment)
+            
+            # Send email
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(sender_email, sender_password)
+            text = msg.as_string()
+            server.sendmail(sender_email, recipient_email, text)
+            server.quit()
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            return False
+
+    def convert_epub_to_pdf_and_email(self, conversion_id, params, recipient_email):
+        """Convert EPUB to PDF and send via email"""
+        try:
+            # Validate email first
+            try:
+                validate_email(recipient_email)
+            except EmailNotValidError:
+                conversion_status[conversion_id] = {
+                    'status': 'error',
+                    'progress': 0,
+                    'message': 'Invalid email address provided',
+                    'created_at': datetime.now()
+                }
+                return
+
+            # First do the regular conversion
+            self.convert_epub_to_pdf(conversion_id, params)
+            
+            # Check if conversion was successful
+            if conversion_status[conversion_id]['status'] == 'completed':
+                conversion_status[conversion_id]['progress'] = 95
+                conversion_status[conversion_id]['message'] = 'Sending PDF via email...'
+                
+                pdf_path = conversion_status[conversion_id]['pdf_path']
+                book_title = conversion_status[conversion_id]['book_title']
+                page_count = conversion_status[conversion_id]['page_count']
+                
+                # Send email
+                if self.send_email_with_pdf(recipient_email, pdf_path, book_title, page_count):
+                    conversion_status[conversion_id]['message'] = f'PDF sent successfully to {recipient_email}! ({page_count} pages)'
+                    conversion_status[conversion_id]['progress'] = 100
+                    conversion_status[conversion_id]['email_sent'] = True
+                    conversion_status[conversion_id]['recipient_email'] = recipient_email
+                else:
+                    conversion_status[conversion_id]['status'] = 'error'
+                    conversion_status[conversion_id]['message'] = 'PDF generated but failed to send email'
+                    
+        except Exception as e:
+            conversion_status[conversion_id] = {
+                'status': 'error',
+                'progress': 0,
+                'message': f'An error occurred: {str(e)}',
+                'created_at': datetime.now()
+            }
 
     def flatten_toc(self, toc_list):
         flat_list = []
@@ -372,6 +487,12 @@ class EpubToPdfConverter:
             # Generate PDF
             doc.build(story)
 
+            conversion_status[conversion_id]['progress'] = 95
+            conversion_status[conversion_id]['message'] = 'Counting PDF pages...'
+
+            # Count PDF pages
+            page_count = self.count_pdf_pages(pdf_filename)
+
             # Cleanup temp files except the final PDF
             files_to_clean = [epub_path, cover_path, title_bg_path, blurred_cover_path, full_page_image_path]
             self.cleanup_temp_files(files_to_clean, temp_dir)
@@ -379,9 +500,10 @@ class EpubToPdfConverter:
             conversion_status[conversion_id] = {
                 'status': 'completed',
                 'progress': 100,
-                'message': 'PDF generation complete!',
+                'message': f'PDF generation complete! ({page_count} pages)',
                 'pdf_path': pdf_filename,
                 'book_title': book_title,
+                'page_count': page_count,
                 'created_at': datetime.now()
             }
 
@@ -392,6 +514,41 @@ class EpubToPdfConverter:
                 'message': f'An error occurred: {str(e)}',
                 'created_at': datetime.now()
             }
+
+
+@converter_bp.route('/convert-and-email', methods=['POST'])
+def start_conversion_and_email():
+    """Start EPUB to PDF conversion and send via email"""
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        if not data or not data.get('epub_url'):
+            return jsonify({'error': 'EPUB URL is required'}), 400
+            
+        if not data.get('email'):
+            return jsonify({'error': 'Email address is required'}), 400
+
+        # Generate unique conversion ID
+        conversion_id = str(uuid.uuid4())
+        recipient_email = data.get('email')
+
+        # Start conversion and email in background thread
+        converter = EpubToPdfConverter()
+        thread = threading.Thread(
+            target=converter.convert_epub_to_pdf_and_email,
+            args=(conversion_id, data, recipient_email)
+        )
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            'conversion_id': conversion_id,
+            'message': f'Conversion started, PDF will be sent to {recipient_email}'
+        }), 202
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @converter_bp.route('/convert', methods=['POST'])
