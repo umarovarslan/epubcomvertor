@@ -121,8 +121,33 @@ class EpubToPdfConverter:
             print(f"Error counting PDF pages: {e}")
             return 0
 
-    def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count):
-        """Send PDF via email"""
+    def get_default_email_body(self):
+        """Get the default email body template"""
+        return """Hello!
+
+Your EPUB to PDF conversion is complete!
+
+Book Title: {book_title}
+Total Pages: {page_count}
+
+Please find the converted PDF attached to this email.
+
+Best regards,
+EPUB to PDF Converter"""
+
+    def process_email_body(self, email_body, book_title, page_count):
+        """Process email body by replacing placeholders with actual values"""
+        if not email_body or email_body.strip() == "":
+            email_body = self.get_default_email_body()
+        
+        # Replace placeholders with actual values
+        processed_body = email_body.replace("{book_title}", str(book_title))
+        processed_body = processed_body.replace("{page_count}", str(page_count))
+        
+        return processed_body
+
+    def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count, custom_email_body=None):
+        """Send PDF via email with custom email body support"""
         try:
             # Email configuration - using Gmail SMTP as example
             # In production, these should be environment variables
@@ -137,22 +162,10 @@ class EpubToPdfConverter:
             msg['To'] = recipient_email
             msg['Subject'] = f"Your converted PDF: {book_title}"
             
-            # Email body
-            body = f"""
-Hello!
-
-Your EPUB to PDF conversion is complete!
-
-Book Title: {book_title}
-Total Pages: {page_count}
-
-Please find the converted PDF attached to this email.
-
-Best regards,
-EPUB to PDF Converter
-            """
+            # Process email body with custom content or use default
+            email_body = self.process_email_body(custom_email_body, book_title, page_count)
             
-            msg.attach(MIMEText(body, 'plain'))
+            msg.attach(MIMEText(email_body, 'plain'))
             
             # Attach PDF
             with open(pdf_path, 'rb') as f:
@@ -202,8 +215,11 @@ EPUB to PDF Converter
                 book_title = conversion_status[conversion_id]['book_title']
                 page_count = conversion_status[conversion_id]['page_count']
                 
-                # Send email
-                if self.send_email_with_pdf(recipient_email, pdf_path, book_title, page_count):
+                # Get custom email body from params
+                custom_email_body = params.get('email_body', None)
+                
+                # Send email with custom body
+                if self.send_email_with_pdf(recipient_email, pdf_path, book_title, page_count, custom_email_body):
                     conversion_status[conversion_id]['message'] = f'PDF sent successfully to {recipient_email}! ({page_count} pages)'
                     conversion_status[conversion_id]['progress'] = 100
                     conversion_status[conversion_id]['email_sent'] = True
