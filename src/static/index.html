@@ -125,10 +125,29 @@
             background: var(--bg-color);
         }
 
-        .form-group input[type="url"]:focus, .form-group input[type="email"]:focus {
+        .form-group textarea {
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            font-family: var(--font-family);
+            transition: all 0.2s ease-in-out;
+            background: var(--bg-color);
+            resize: vertical;
+            min-height: 120px;
+            line-height: 1.5;
+        }
+
+        .form-group input[type="url"]:focus, .form-group input[type="email"]:focus, .form-group textarea:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .form-group .help-text {
+            font-size: 0.75rem;
+            color: var(--text-light-color);
+            margin-top: 0.25rem;
         }
         
         .grid {
@@ -460,6 +479,23 @@
                             <label for="emailAddress">Email Address</label>
                             <input type="email" id="emailAddress" name="email" placeholder="Enter your email address" value="mr.umaroff@gmail.com">
                         </div>
+                        <div class="form-group">
+                            <label for="emailBody">Email Message</label>
+                            <textarea id="emailBody" name="email_body" placeholder="Customize your email message...">Hello!
+
+Your EPUB to PDF conversion is complete!
+
+Book Title: {book_title}
+Total Pages: {page_count}
+
+Please find the converted PDF attached to this email.
+
+Best regards,
+EPUB to PDF Converter</textarea>
+                            <div class="help-text">
+                                You can use placeholders: {book_title} and {page_count} which will be automatically replaced with actual values.
+                            </div>
+                        </div>
                     </section>
                     
                     <div id="messagesContainer"></div>
@@ -524,6 +560,7 @@
                     downloadButton: document.getElementById('downloadButton'),
                     messagesContainer: document.getElementById('messagesContainer'),
                     emailAddress: document.getElementById('emailAddress'),
+                    emailBody: document.getElementById('emailBody'),
                     sliders: {
                         fontSize: { input: document.getElementById('fontSize'), output: document.getElementById('fontSizeValue'), unit: ' pt' },
                         lineSpacing: { input: document.getElementById('lineSpacing'), output: document.getElementById('lineSpacingValue'), unit: 'x', decimals: 1 },
@@ -565,6 +602,18 @@
                 this.removeMessages();
                 this.dom.form.reset();
                 this.dom.emailAddress.value = 'mr.umaroff@gmail.com'; // Reset to default email
+                // Reset email body to default
+                this.dom.emailBody.value = `Hello!
+
+Your EPUB to PDF conversion is complete!
+
+Book Title: {book_title}
+Total Pages: {page_count}
+
+Please find the converted PDF attached to this email.
+
+Best regards,
+EPUB to PDF Converter`;
                 this.updateAllSliderValues();
                 this.currentConversionType = null;
             }
