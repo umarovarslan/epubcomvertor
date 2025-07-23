@@ -128,8 +128,8 @@ class EpubToPdfConverter:
             # In production, these should be environment variables
             smtp_server = "smtp.gmail.com"
             smtp_port = 587
-            sender_email = "your-email@gmail.com"  # Replace with actual sender email
-            sender_password = "your-app-password"  # Replace with actual app password
+            sender_email = "mr.umaroff@gmail.com"  # Replace with actual sender email
+            sender_password = "Gentleman...a1998@@@"  # Replace with actual app password
             
             # Create message
             msg = MIMEMultipart()
