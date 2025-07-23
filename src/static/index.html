@@ -115,7 +115,7 @@
             font-size: 0.875rem;
         }
 
-        .form-group input[type="url"] {
+        .form-group input[type="url"], .form-group input[type="email"] {
             padding: 0.75rem 1rem;
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
@@ -125,7 +125,7 @@
             background: var(--bg-color);
         }
 
-        .form-group input[type="url"]:focus {
+        .form-group input[type="url"]:focus, .form-group input[type="email"]:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
@@ -204,6 +204,7 @@
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
+            margin-bottom: 1rem;
         }
 
         .action-button svg {
@@ -217,11 +218,20 @@
 
         #convertButton {
             background-color: var(--primary-color);
-            margin-top: 1rem;
         }
 
         #convertButton:hover:not(:disabled) {
             background-color: var(--primary-color-dark);
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-2px);
+        }
+
+        #convertAndEmailButton {
+            background-color: var(--secondary-color);
+        }
+
+        #convertAndEmailButton:hover:not(:disabled) {
+            background-color: var(--secondary-color-dark);
             box-shadow: var(--shadow-lg);
             transform: translateY(-2px);
         }
@@ -440,13 +450,30 @@
                             </div>
                         </div>
                     </section>
+
+                    <section class="form-section">
+                        <h3 class="form-section-header">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75z" /></svg>
+                            <span>Email Settings (Optional)</span>
+                        </h3>
+                        <div class="form-group">
+                            <label for="emailAddress">Email Address</label>
+                            <input type="email" id="emailAddress" name="email" placeholder="Enter your email address" value="mr.umaroff@gmail.com">
+                        </div>
+                    </section>
                     
                     <div id="messagesContainer"></div>
 
-                    <button type="submit" class="action-button" id="convertButton">
-                        <span class="spinner" id="spinner"></span>
+                    <button type="button" class="action-button" id="convertButton">
+                        <span class="spinner" id="convertSpinner"></span>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75l3 3m0 0l3-3m-3 3v-7.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        <span id="buttonText">Convert to PDF</span>
+                        <span id="convertButtonText">Convert & Download</span>
+                    </button>
+
+                    <button type="button" class="action-button" id="convertAndEmailButton">
+                        <span class="spinner" id="emailSpinner"></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75z" /></svg>
+                        <span id="emailButtonText">Convert & Send to Email</span>
                     </button>
                 </form>
             </main>
@@ -478,13 +505,17 @@
             constructor() {
                 this.conversionId = null;
                 this.statusInterval = null;
+                this.currentConversionType = null; // 'download' or 'email'
                 this.dom = {
                     form: document.getElementById('conversionForm'),
                     formContainer: document.getElementById('formContainer'),
                     convertButton: document.getElementById('convertButton'),
+                    convertAndEmailButton: document.getElementById('convertAndEmailButton'),
                     resetButton: document.getElementById('resetButton'),
-                    spinner: document.getElementById('spinner'),
-                    buttonText: document.getElementById('buttonText'),
+                    convertSpinner: document.getElementById('convertSpinner'),
+                    emailSpinner: document.getElementById('emailSpinner'),
+                    convertButtonText: document.getElementById('convertButtonText'),
+                    emailButtonText: document.getElementById('emailButtonText'),
                     statusSection: document.getElementById('statusSection'),
                     progressFill: document.getElementById('progressFill'),
                     progressText: document.getElementById('progressText'),
@@ -492,6 +523,7 @@
                     downloadSection: document.getElementById('downloadSection'),
                     downloadButton: document.getElementById('downloadButton'),
                     messagesContainer: document.getElementById('messagesContainer'),
+                    emailAddress: document.getElementById('emailAddress'),
                     sliders: {
                         fontSize: { input: document.getElementById('fontSize'), output: document.getElementById('fontSizeValue'), unit: ' pt' },
                         lineSpacing: { input: document.getElementById('lineSpacing'), output: document.getElementById('lineSpacingValue'), unit: 'x', decimals: 1 },
@@ -505,11 +537,8 @@
             }
 
             initializeEventListeners() {
-                this.dom.form.addEventListener('submit', e => {
-                    e.preventDefault();
-                    this.startConversion();
-                });
-
+                this.dom.convertButton.addEventListener('click', () => this.startConversion('download'));
+                this.dom.convertAndEmailButton.addEventListener('click', () => this.startConversion('email'));
                 this.dom.resetButton.addEventListener('click', () => this.resetUI());
 
                 Object.values(this.dom.sliders).forEach(slider => {
@@ -532,12 +561,15 @@
                 this.dom.downloadSection.style.display = 'none';
                 this.dom.resetButton.style.display = 'none';
                 this.dom.convertButton.style.display = 'flex';
+                this.dom.convertAndEmailButton.style.display = 'flex';
                 this.removeMessages();
                 this.dom.form.reset();
+                this.dom.emailAddress.value = 'mr.umaroff@gmail.com'; // Reset to default email
                 this.updateAllSliderValues();
+                this.currentConversionType = null;
             }
 
-            async startConversion() {
+            async startConversion(type) {
                 const formData = new FormData(this.dom.form);
                 const data = Object.fromEntries(formData.entries());
 
@@ -546,14 +578,21 @@
                     return;
                 }
 
+                if (type === 'email' && (!data.email || !this.isValidEmail(data.email))) {
+                    this.showMessage('Please provide a valid email address for email conversion.', 'error');
+                    return;
+                }
+
                 try {
+                    this.currentConversionType = type;
                     this.setConvertingState(true);
                     this.dom.formContainer.style.display = 'none';
                     this.dom.statusSection.classList.add('show');
                     this.logStatus('🚀 Starting conversion...', true);
                     this.updateProgress(0, 'Initializing...');
 
-                    const response = await fetch('/api/convert', {
+                    const endpoint = type === 'email' ? '/api/convert-and-email' : '/api/convert';
+                    const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
@@ -613,9 +652,15 @@
 
             handleConversionComplete(status) {
                 this.stopStatusPolling();
-                this.updateProgress(100, 'Conversion successful!');
-                this.logStatus('🎉 PDF generated! Ready for download.');
-                this.showDownloadButton();
+                this.updateProgress(100, status.message);
+                
+                if (this.currentConversionType === 'email') {
+                    this.logStatus('📧 PDF sent to your email! Check your inbox.');
+                } else {
+                    this.logStatus('🎉 PDF generated! Ready for download.');
+                    this.showDownloadButton();
+                }
+                
                 this.dom.resetButton.style.display = 'flex';
             }
 
@@ -626,8 +671,16 @@
 
             setConvertingState(isConverting) {
                 this.dom.convertButton.disabled = isConverting;
-                this.dom.spinner.style.display = isConverting ? 'inline-block' : 'none';
-                this.dom.buttonText.textContent = isConverting ? 'Converting...' : 'Convert to PDF';
+                this.dom.convertAndEmailButton.disabled = isConverting;
+                
+                if (this.currentConversionType === 'download') {
+                    this.dom.convertSpinner.style.display = isConverting ? 'inline-block' : 'none';
+                    this.dom.convertButtonText.textContent = isConverting ? 'Converting...' : 'Convert & Download';
+                } else if (this.currentConversionType === 'email') {
+                    this.dom.emailSpinner.style.display = isConverting ? 'inline-block' : 'none';
+                    this.dom.emailButtonText.textContent = isConverting ? 'Converting & Sending...' : 'Convert & Send to Email';
+                }
+                
                 if (isConverting) this.removeMessages();
             }
 
@@ -660,6 +713,11 @@
                 } catch (_) {
                     return false;
                 }
+            }
+
+            isValidEmail(email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailRegex.test(email);
             }
 
             removeMessages() {
