@@ -121,15 +121,51 @@ class EpubToPdfConverter:
             print(f"Error counting PDF pages: {e}")
             return 0
 
-    def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count):
-        """Send PDF via email"""
+    def test_email_config(self):
+        """Test email configuration"""
         try:
-            # Email configuration - using Gmail SMTP as example
-            # In production, these should be environment variables
+            # Email configuration - UPDATE THESE VALUES
             smtp_server = "smtp.gmail.com"
             smtp_port = 587
-            sender_email = "mr.umaroff@gmail.com"  # Replace with actual sender email
-            sender_password = "mhwb iwfn epsc glnt"  # Replace with actual app password
+            sender_email = "mr.umaroff@gmail.com"  # REPLACE WITH YOUR GMAIL
+            sender_password = "mhwb iwfn epsc glnt"  # REPLACE WITH YOUR APP PASSWORD
+            
+            print(f"Testing email config for: {sender_email}")
+            
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.set_debuglevel(1)  # Enable debug output
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.quit()
+            
+            print("✅ Email configuration test successful!")
+            return True
+            
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP Authentication Error: {e}")
+            print("Check your Gmail address and App Password")
+            return False
+        except Exception as e:
+            print(f"❌ Email configuration test failed: {e}")
+            return False
+
+    def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count):
+        """Send PDF via email with enhanced error handling"""
+        try:
+            # Email configuration - UPDATE THESE VALUES BEFORE USING
+            smtp_server = "smtp.gmail.com"
+            smtp_port = 587
+            sender_email = "your-email@gmail.com"  # REPLACE WITH YOUR ACTUAL GMAIL
+            sender_password = "your-app-password"  # REPLACE WITH YOUR ACTUAL APP PASSWORD
+            
+            # Check if configuration is still using placeholder values
+            if sender_email == "your-email@gmail.com" or sender_password == "your-app-password":
+                print("❌ Email configuration not set up! Please update sender_email and sender_password")
+                return False
+            
+            print(f"Attempting to send email to: {recipient_email}")
+            print(f"Using sender email: {sender_email}")
+            print(f"PDF file size: {os.path.getsize(pdf_path)} bytes")
             
             # Create message
             msg = MIMEMultipart()
@@ -155,24 +191,57 @@ EPUB to PDF Converter
             msg.attach(MIMEText(body, 'plain'))
             
             # Attach PDF
+            print("Attaching PDF file...")
             with open(pdf_path, 'rb') as f:
                 pdf_attachment = MIMEApplication(f.read(), _subtype='pdf')
                 safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
                 pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f"{safe_title}.pdf")
                 msg.attach(pdf_attachment)
             
-            # Send email
+            # Send email with detailed error logging
+            print("Connecting to SMTP server...")
             server = smtplib.SMTP(smtp_server, smtp_port)
+            server.set_debuglevel(1)  # Enable debug output
+            
+            print("Starting TLS...")
             server.starttls()
+            
+            print("Logging in...")
             server.login(sender_email, sender_password)
+            
+            print("Sending email...")
             text = msg.as_string()
             server.sendmail(sender_email, recipient_email, text)
             server.quit()
             
+            print("✅ Email sent successfully!")
             return True
             
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP Authentication Error: {e}")
+            print("This usually means:")
+            print("1. Wrong email address or password")
+            print("2. 2-Factor Authentication not enabled")
+            print("3. App Password not generated or incorrect")
+            print("4. 'Less secure app access' disabled (if not using App Password)")
+            return False
+        except smtplib.SMTPRecipientsRefused as e:
+            print(f"❌ SMTP Recipients Refused: {e}")
+            print("Check the recipient email address format")
+            return False
+        except smtplib.SMTPServerDisconnected as e:
+            print(f"❌ SMTP Server Disconnected: {e}")
+            print("Check your internet connection and SMTP server settings")
+            return False
+        except smtplib.SMTPDataError as e:
+            print(f"❌ SMTP Data Error: {e}")
+            print("This might be due to attachment size or content issues")
+            return False
         except Exception as e:
-            print(f"Error sending email: {e}")
+            print(f"❌ General error sending email: {e}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def convert_epub_to_pdf_and_email(self, conversion_id, params, recipient_email):
@@ -186,6 +255,17 @@ EPUB to PDF Converter
                     'status': 'error',
                     'progress': 0,
                     'message': 'Invalid email address provided',
+                    'created_at': datetime.now()
+                }
+                return
+
+            # Test email configuration before starting conversion
+            print("Testing email configuration...")
+            if not self.test_email_config():
+                conversion_status[conversion_id] = {
+                    'status': 'error',
+                    'progress': 0,
+                    'message': 'Email configuration test failed. Please check SMTP settings.',
                     'created_at': datetime.now()
                 }
                 return
@@ -210,7 +290,7 @@ EPUB to PDF Converter
                     conversion_status[conversion_id]['recipient_email'] = recipient_email
                 else:
                     conversion_status[conversion_id]['status'] = 'error'
-                    conversion_status[conversion_id]['message'] = 'PDF generated but failed to send email'
+                    conversion_status[conversion_id]['message'] = 'PDF generated but failed to send email. Check server logs for details.'
                     
         except Exception as e:
             conversion_status[conversion_id] = {
@@ -619,6 +699,19 @@ def download_pdf(conversion_id):
         download_name=f"{safe_title}.pdf",
         mimetype='application/pdf'
     )
+
+
+@converter_bp.route('/test-email', methods=['POST'])
+def test_email_configuration():
+    """Test email configuration endpoint"""
+    try:
+        converter = EpubToPdfConverter()
+        if converter.test_email_config():
+            return jsonify({'message': 'Email configuration test successful!'}), 200
+        else:
+            return jsonify({'error': 'Email configuration test failed. Check server logs.'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Email test error: {str(e)}'}), 500
 
 
 # Cleanup old conversions periodically (simple implementation)
