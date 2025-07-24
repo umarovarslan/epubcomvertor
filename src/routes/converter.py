@@ -111,11 +111,27 @@ class ChapterBookmark:
         self.width = 0
         self.height = 0
         
-    def draw(self):
+    def wrap(self, availWidth, availHeight):
+        """Required method for ReportLab flowables"""
+        return (0, 0)  # This flowable takes no space
+        
+    def drawOn(self, canvas, x, y):
+        """Required method for ReportLab flowables"""
         # This flowable doesn't draw anything visible, just creates a bookmark
-        canvas = self.canv
         canvas.bookmarkPage(self.bookmark_key)
         canvas.addOutlineEntry(self.title, self.bookmark_key, level=0)
+        
+    def getKeepWithNext(self):
+        """Required method for ReportLab flowables"""
+        return False
+        
+    def getSpaceAfter(self):
+        """Required method for ReportLab flowables"""
+        return 0
+        
+    def getSpaceBefore(self):
+        """Required method for ReportLab flowables"""
+        return 0
 
 
 class EpubToPdfConverter:
