@@ -35,21 +35,22 @@ converter_bp = Blueprint("converter", __name__)
 # Global storage for conversion status
 conversion_status = {}
 
-class PageTracker:
-    """Helper class to track page numbers during PDF generation"""
+class BookmarkTracker:
+    """Helper class to track bookmarks and page numbers during PDF generation"""
     def __init__(self):
-        self.chapter_pages = {}
+        self.bookmarks = {}
+        self.current_page = 1
         
-    def add_chapter(self, chapter_key, page_number):
-        self.chapter_pages[chapter_key] = page_number
+    def add_bookmark(self, bookmark_key, page_number):
+        self.bookmarks[bookmark_key] = page_number
         
-    def get_chapter_page(self, chapter_key):
-        return self.chapter_pages.get(chapter_key, 1)
+    def get_bookmark_page(self, bookmark_key):
+        return self.bookmarks.get(bookmark_key, 1)
 
 class PageDrawer:
     """Helper class to manage data for ReportLab's onPage functions."""
     def __init__(self, cover_path, title_bg_path, blurred_cover_path, full_page_image_path,
-                 book_title, author_name, inner_margin, outer_margin, top_bottom_margin, page_tracker=None):
+                 book_title, author_name, inner_margin, outer_margin, top_bottom_margin, bookmark_tracker=None):
         self.cover_path = cover_path
         self.title_page_bg_path = title_bg_path
         self.blurred_cover_path = blurred_cover_path
@@ -59,7 +60,7 @@ class PageDrawer:
         self.inner_margin = inner_margin
         self.outer_margin = outer_margin
         self.top_bottom_margin = top_bottom_margin
-        self.page_tracker = page_tracker
+        self.bookmark_tracker = bookmark_tracker
 
     def cover_and_content_pages(self, canvas, doc):
         canvas.saveState()
@@ -102,6 +103,21 @@ class PageDrawer:
         canvas.restoreState()
 
 
+class ChapterBookmark:
+    """Custom flowable to create bookmarks at chapter starts"""
+    def __init__(self, bookmark_key, title):
+        self.bookmark_key = bookmark_key
+        self.title = title
+        self.width = 0
+        self.height = 0
+        
+    def draw(self):
+        # This flowable doesn't draw anything visible, just creates a bookmark
+        canvas = self.canv
+        canvas.bookmarkPage(self.bookmark_key)
+        canvas.addOutlineEntry(self.title, self.bookmark_key, level=0)
+
+
 class EpubToPdfConverter:
     def __init__(self):
         # Register DejaVu Sans font (we'll need to include this font file)
@@ -134,36 +150,44 @@ class EpubToPdfConverter:
             print(f"Error counting PDF pages: {e}")
             return 0
 
-    def extract_chapter_page_numbers(self, pdf_path, toc_items):
-        """Extract page numbers for each chapter from the generated PDF"""
+    def extract_bookmark_page_numbers(self, pdf_path, toc_items):
+        """Extract page numbers for each chapter from PDF bookmarks"""
         chapter_pages = {}
         try:
             with open(pdf_path, "rb") as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 
-                for i, item in enumerate(toc_items):
-                    bookmark_key = f"toc_entry_{i}"
-                    
-                    # Search for the chapter title in the PDF text
-                    for page_num, page in enumerate(pdf_reader.pages):
-                        try:
-                            text = page.extract_text()
-                            # Look for the chapter title in the page text
-                            if item.title in text:
-                                # Adjust for cover page and title page offset
-                                actual_page = page_num - 2  # Subtract cover and title pages
-                                if actual_page > 0:
-                                    chapter_pages[bookmark_key] = actual_page
+                # Get the outline (bookmarks) from the PDF
+                if hasattr(pdf_reader, 'outline') and pdf_reader.outline:
+                    for i, item in enumerate(toc_items):
+                        bookmark_key = f"toc_entry_{i}"
+                        
+                        # Find the corresponding bookmark in the PDF outline
+                        for outline_item in pdf_reader.outline:
+                            if hasattr(outline_item, 'title') and outline_item.title == item.title:
+                                try:
+                                    # Get the page number from the bookmark destination
+                                    page_num = pdf_reader.get_destination_page_number(outline_item) + 1
+                                    # Adjust for cover and title pages (subtract 2 to get content page number)
+                                    content_page = page_num - 2
+                                    if content_page > 0:
+                                        chapter_pages[bookmark_key] = content_page
                                     break
-                        except Exception:
-                            continue
-                    
-                    # Fallback if not found
-                    if bookmark_key not in chapter_pages:
+                                except Exception as e:
+                                    print(f"Error getting page for bookmark {item.title}: {e}")
+                                    continue
+                        
+                        # Fallback if bookmark not found
+                        if bookmark_key not in chapter_pages:
+                            chapter_pages[bookmark_key] = i + 1
+                else:
+                    # Fallback to sequential numbering if no bookmarks
+                    for i, item in enumerate(toc_items):
+                        bookmark_key = f"toc_entry_{i}"
                         chapter_pages[bookmark_key] = i + 1
                         
         except Exception as e:
-            print(f"Error extracting page numbers: {e}")
+            print(f"Error extracting bookmark page numbers: {e}")
             # Fallback to sequential numbering
             for i, item in enumerate(toc_items):
                 bookmark_key = f"toc_entry_{i}"
@@ -316,7 +340,7 @@ EPUB to PDF Converter"""
 
     def build_story(self, doc, book_title, author_name, book_description, toc_items, content_map,
                     image_map, font_size, line_spacing, has_full_page_image,
-                    frame_width, frame_height, toc_page_numbers=None):
+                    frame_width, frame_height, toc_page_numbers=None, create_bookmarks=False):
         story = []
         styles = getSampleStyleSheet()
         leading = font_size * line_spacing
@@ -399,6 +423,11 @@ EPUB to PDF Converter"""
         for i, item in enumerate(toc_items):
             bookmark_key = f"toc_entry_{i}"
             story.append(PageBreak())
+            
+            # Add bookmark for first pass
+            if create_bookmarks:
+                story.append(ChapterBookmark(bookmark_key, item.title))
+            
             title_with_anchor = f'<a name="{bookmark_key}"/>{item.title}'
             story.append(Paragraph(title_with_anchor, h1_style))
 
@@ -463,7 +492,7 @@ EPUB to PDF Converter"""
                     pass
 
     def convert_epub_to_pdf(self, conversion_id, params):
-        """Main conversion logic with two-pass PDF generation for accurate TOC"""
+        """Main conversion logic with two-pass PDF generation for accurate TOC using bookmarks"""
         try:
             conversion_status[conversion_id] = {
                 "status": "processing",
@@ -528,9 +557,9 @@ EPUB to PDF Converter"""
                     img_resized = img.resize((int(letter[0]), int(letter[1])))
                     img_resized.filter(ImageFilter.GaussianBlur(25)).save(blurred_cover_path)
 
-            # --- First Pass: Generate PDF without accurate TOC to get page numbers ---
+            # --- First Pass: Generate PDF with bookmarks to get page numbers ---
             conversion_status[conversion_id]["progress"] = 35
-            conversion_status[conversion_id]["message"] = "First pass: Generating content to map page numbers..."
+            conversion_status[conversion_id]["message"] = "First pass: Generating content with bookmarks..."
 
             first_pass_filename = os.path.join(temp_dir, "first_pass.pdf")
             doc_first_pass = BaseDocTemplate(first_pass_filename, pagesize=letter)
@@ -539,7 +568,8 @@ EPUB to PDF Converter"""
             frame_width = page_width - inner_margin - outer_margin
             frame_height = page_height - (2 * top_bottom_margin)
 
-            page_drawer = PageDrawer(cover_path or "", title_bg_path or "", blurred_cover_path or "", full_page_image_path, book_title, author_name, inner_margin, outer_margin, top_bottom_margin)
+            bookmark_tracker = BookmarkTracker()
+            page_drawer = PageDrawer(cover_path or "", title_bg_path or "", blurred_cover_path or "", full_page_image_path, book_title, author_name, inner_margin, outer_margin, top_bottom_margin, bookmark_tracker)
             
             odd_frame = Frame(inner_margin, top_bottom_margin, frame_width, frame_height, id="odd_frame")
             even_frame = Frame(outer_margin, top_bottom_margin, frame_width, frame_height, id="even_frame")
@@ -555,15 +585,15 @@ EPUB to PDF Converter"""
 
             doc_first_pass.addPageTemplates(page_templates)
 
-            # Build story without accurate TOC
-            story_first_pass = self.build_story(doc_first_pass, book_title, author_name, book_description, toc_items, content_map, image_map, font_size, line_spacing, bool(full_page_image_path), frame_width, frame_height)
+            # Build story with bookmarks
+            story_first_pass = self.build_story(doc_first_pass, book_title, author_name, book_description, toc_items, content_map, image_map, font_size, line_spacing, bool(full_page_image_path), frame_width, frame_height, create_bookmarks=True)
             doc_first_pass.build(story_first_pass)
 
-            # --- Extract page numbers from the first pass PDF ---
+            # --- Extract page numbers from the first pass PDF bookmarks ---
             conversion_status[conversion_id]["progress"] = 65
-            conversion_status[conversion_id]["message"] = "Extracting accurate page numbers..."
+            conversion_status[conversion_id]["message"] = "Extracting accurate page numbers from bookmarks..."
             
-            toc_page_numbers = self.extract_chapter_page_numbers(first_pass_filename, toc_items)
+            toc_page_numbers = self.extract_bookmark_page_numbers(first_pass_filename, toc_items)
 
             # --- Second Pass: Generate final PDF with accurate TOC ---
             conversion_status[conversion_id]["progress"] = 75
