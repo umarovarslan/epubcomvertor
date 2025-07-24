@@ -19,14 +19,15 @@ from bs4 import BeautifulSoup
 from PIL import Image, ImageFilter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
-                                Spacer, NextPageTemplate, PageBreak, Image as ReportLabImage)
+                                Spacer, NextPageTemplate, PageBreak, Image as ReportLabImage,
+                                Table, TableStyle)
 from reportlab.platypus.flowables import KeepInFrame
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY, TA_RIGHT
 import PyPDF2
 
 converter_bp = Blueprint('converter', __name__)
@@ -87,6 +88,21 @@ class PageDrawer:
         if os.path.exists(self.blurred_cover_path):
             canvas.drawImage(self.blurred_cover_path, 0, 0, width=letter[0], height=letter[1], preserveAspectRatio=False)
         canvas.restoreState()
+
+
+class PageNumberTracker:
+    """Helper class to track page numbers for TOC generation"""
+    def __init__(self):
+        self.chapter_pages = {}
+        self.current_page = 1  # Start from page 1 (after cover and title)
+        
+    def add_chapter(self, chapter_key, page_number):
+        """Add a chapter with its starting page number"""
+        self.chapter_pages[chapter_key] = page_number
+        
+    def get_chapter_page(self, chapter_key):
+        """Get the page number for a chapter"""
+        return self.chapter_pages.get(chapter_key, 1)
 
 
 class EpubToPdfConverter:
@@ -264,6 +280,85 @@ EPUB to PDF Converter"""
             else:
                 raise FileNotFoundError(f"Image file not found: {image_input}")
 
+    def estimate_chapter_pages(self, toc_items, content_map, font_size, line_spacing, frame_width, frame_height):
+        """Estimate page numbers for each chapter based on content length"""
+        page_tracker = PageNumberTracker()
+        current_page = 2  # Start after TOC (cover=1, title=2, toc=3, content starts at 4)
+        
+        # Estimate lines per page based on font size and line spacing
+        leading = font_size * line_spacing
+        lines_per_page = int((frame_height - inch) / leading)  # Subtract some space for margins
+        
+        for i, item in enumerate(toc_items):
+            bookmark_key = f'toc_entry_{i}'
+            page_tracker.add_chapter(bookmark_key, current_page)
+            
+            # Estimate content length for this chapter
+            chapter_html = content_map.get(item.href.split('#')[0])
+            if chapter_html:
+                soup = BeautifulSoup(chapter_html, 'html.parser')
+                text_content = soup.get_text()
+                
+                # Rough estimation: 80 characters per line, accounting for word wrapping
+                chars_per_line = 80
+                estimated_lines = len(text_content) / chars_per_line
+                estimated_pages = max(1, int(estimated_lines / lines_per_page))
+                
+                current_page += estimated_pages
+            else:
+                current_page += 1  # Default to 1 page if no content
+                
+        return page_tracker
+
+    def create_toc_with_page_numbers(self, toc_items, page_tracker, frame_width):
+        """Create Table of Contents with page numbers on the right side"""
+        toc_data = []
+        
+        # Create TOC style for entries
+        toc_title_style = ParagraphStyle('TOCTitle', 
+                                       fontName='DejaVu-Sans', 
+                                       fontSize=14, 
+                                       leading=18,
+                                       leftIndent=inch*0.25)
+        
+        toc_page_style = ParagraphStyle('TOCPage', 
+                                      fontName='DejaVu-Sans', 
+                                      fontSize=14, 
+                                      leading=18,
+                                      alignment=TA_RIGHT)
+        
+        for i, item in enumerate(toc_items):
+            bookmark_key = f'toc_entry_{i}'
+            page_number = page_tracker.get_chapter_page(bookmark_key)
+            
+            # Create table row with title and page number
+            title_cell = Paragraph(f'<a href="#{bookmark_key}">{item.title}</a>', toc_title_style)
+            page_cell = Paragraph(str(page_number), toc_page_style)
+            
+            toc_data.append([title_cell, page_cell])
+        
+        # Create table with proper column widths
+        title_width = frame_width - inch * 1.5  # Leave space for page numbers
+        page_width = inch * 1.5
+        
+        toc_table = Table(toc_data, colWidths=[title_width, page_width])
+        
+        # Style the table
+        toc_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),      # Left align titles
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),     # Right align page numbers
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),     # Top align all cells
+            ('FONTNAME', (0, 0), (-1, -1), 'DejaVu-Sans'),
+            ('FONTSIZE', (0, 0), (-1, -1), 14),
+            ('LEADING', (0, 0), (-1, -1), 18),
+            ('LEFTPADDING', (0, 0), (0, -1), inch*0.25),  # Indent titles
+            ('RIGHTPADDING', (1, 0), (1, -1), 0),         # No right padding for page numbers
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),       # Space between entries
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        
+        return toc_table
+
     def build_story(self, doc, book_title, author_name, book_description, toc_items, content_map,
                     image_map, font_size, line_spacing, has_full_page_image,
                     frame_width, frame_height):
@@ -275,8 +370,6 @@ EPUB to PDF Converter"""
                                       fontSize=font_size, leading=leading, alignment=TA_JUSTIFY)
         h1_style = ParagraphStyle('H1', parent=styles['h1'], fontName='DejaVu-Sans',
                                     fontSize=20, leading=24, spaceAfter=12, alignment=TA_CENTER)
-        toc_style = ParagraphStyle('TOC', parent=styles['Normal'], fontName='DejaVu-Sans',
-                                     fontSize=14, leading=18, leftIndent=inch*0.25)
         title_page_title_style = ParagraphStyle('TitlePageTitle', parent=styles['h1'], fontName='DejaVu-Sans',
                                                   fontSize=30, textColor=colors.black, alignment=TA_CENTER)
         title_page_author_style = ParagraphStyle('TitlePageAuthor', parent=styles['Normal'], fontName='DejaVu-Sans',
@@ -301,14 +394,23 @@ EPUB to PDF Converter"""
         story.append(NextPageTemplate(['OddContentPage', 'EvenContentPage']))
         story.append(PageBreak())
 
-        # Table of contents
-        toc_page_content = [Paragraph("Содержание", h1_style), Spacer(1, 0.25*inch)]
+        # Estimate page numbers for chapters
+        page_tracker = self.estimate_chapter_pages(toc_items, content_map, font_size, line_spacing, frame_width, frame_height)
+
+        # Table of contents with page numbers
+        story.append(Paragraph("Содержание", h1_style))
+        story.append(Spacer(1, 0.25*inch))
+        
+        # Add TOC table with page numbers
+        toc_table = self.create_toc_with_page_numbers(toc_items, page_tracker, frame_width)
+        story.append(toc_table)
+        story.append(Spacer(1, 0.5*inch))
+
+        # Chapter content
         chapter_content_story = []
-        toc_links = []
 
         for i, item in enumerate(toc_items):
             bookmark_key = f'toc_entry_{i}'
-            toc_links.append((item.title, bookmark_key))
             chapter_content_story.append(PageBreak())
             title_with_anchor = f'<a name="{bookmark_key}"/>{item.title}'
             chapter_content_story.append(Paragraph(title_with_anchor, h1_style))
@@ -350,10 +452,6 @@ EPUB to PDF Converter"""
                             except Exception:
                                 pass  # Skip problematic images
 
-        for title, key in toc_links:
-            toc_page_content.append(Paragraph(f'<a href="#{key}">{title}</a>', toc_style))
-
-        story.extend(toc_page_content)
         story.extend(chapter_content_story)
 
         if has_full_page_image:
