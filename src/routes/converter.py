@@ -237,12 +237,32 @@ EPUB to PDF Converter"""
             }
 
     def flatten_toc(self, toc_list):
+        """
+        FIXED: Properly handle different types of TOC structures.
+        The error was caused by trying to iterate over a single epub.Link object
+        when the TOC structure was not nested.
+        """
         flat_list = []
+        
+        # Handle case where toc_list might be a single Link object
+        if isinstance(toc_list, epub.Link):
+            return [toc_list]
+        
+        # Handle case where toc_list is not iterable (None, etc.)
+        if not hasattr(toc_list, '__iter__'):
+            return []
+        
         for item in toc_list:
             if isinstance(item, (list, tuple)):
+                # Recursively flatten nested lists/tuples
                 flat_list.extend(self.flatten_toc(item))
             elif isinstance(item, epub.Link):
+                # Add Link objects directly
                 flat_list.append(item)
+            elif hasattr(item, '__iter__') and not isinstance(item, (str, bytes)):
+                # Handle other iterable types that might contain Links
+                flat_list.extend(self.flatten_toc(item))
+        
         return flat_list
 
     def get_image_path(self, image_input, temp_filename, temp_dir):
@@ -356,28 +376,19 @@ EPUB to PDF Converter"""
         story.extend(toc_page_content)
         story.extend(chapter_content_story)
 
+        # Full page image if provided
         if has_full_page_image:
             story.append(NextPageTemplate('FullImagePage'))
             story.append(PageBreak())
+            story.append(Spacer(1, 8*inch))  # Placeholder content
 
-        # Final page
+        # Final page with blurred cover
         story.append(NextPageTemplate('FinalPage'))
         story.append(PageBreak())
-        final_page_content = [
-            Spacer(1, (letter[1] / 2) - 2*inch),
-            Paragraph(book_description, description_style)
-        ]
-        story.append(KeepInFrame(letter[0] - 2*inch, letter[1], final_page_content, hAlign='CENTER', vAlign='MIDDLE'))
+        story.append(Spacer(1, 3*inch))
+        story.append(Paragraph(book_description, description_style))
 
         return story
-
-    def cleanup_temp_files(self, file_paths, temp_dir):
-        for path in file_paths:
-            if path and path.startswith(temp_dir) and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
 
     def convert_epub_to_pdf(self, conversion_id, params):
         """Main conversion logic"""
@@ -449,75 +460,66 @@ EPUB to PDF Converter"""
                     img_resized = img.resize((int(letter[0]), int(letter[1])))
                     img_resized.filter(ImageFilter.GaussianBlur(25)).save(blurred_cover_path)
 
-            conversion_status[conversion_id]['progress'] = 35
+            conversion_status[conversion_id]['progress'] = 40
             conversion_status[conversion_id]['message'] = 'Building PDF structure...'
 
-            # Build PDF
-            safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
-            pdf_filename = os.path.join(temp_dir, f"{safe_title}.pdf")
-
-            doc = BaseDocTemplate(pdf_filename, pagesize=letter)
-            page_width, page_height = letter
-
-            # Calculate frame dimensions based on new margins
-            frame_width = page_width - inner_margin - outer_margin
-            frame_height = page_height - (2 * top_bottom_margin)
-
-            page_drawer = PageDrawer(
-                cover_path=cover_path or '', title_bg_path=title_bg_path or '',
-                blurred_cover_path=blurred_cover_path or '',
-                full_page_image_path=full_page_image_path,
-                book_title=book_title, author_name=author_name,
-                inner_margin=inner_margin, outer_margin=outer_margin,
-                top_bottom_margin=top_bottom_margin
-            )
+            # Create PDF
+            pdf_path = os.path.join(temp_dir, "converted_book.pdf")
             
-            # ** DEFINE FRAMES AND PAGE TEMPLATES FOR MIRRORED MARGINS **
-            odd_frame = Frame(inner_margin, top_bottom_margin, frame_width, frame_height, id='odd_frame')
-            even_frame = Frame(outer_margin, top_bottom_margin, frame_width, frame_height, id='even_frame')
+            # Calculate frame dimensions based on margins
+            frame_width = letter[0] - inner_margin - outer_margin
+            frame_height = letter[1] - 2 * top_bottom_margin
 
-            page_templates = [
-                PageTemplate(id='CoverPage', frames=[Frame(0, 0, letter[0], letter[1])], onPage=page_drawer.cover_and_content_pages),
-                PageTemplate(id='TitlePage', frames=[Frame(0, 0, letter[0], letter[1])], onPage=page_drawer.title_page_background),
-                PageTemplate(id='OddContentPage', frames=[odd_frame], onPage=page_drawer.cover_and_content_pages),
-                PageTemplate(id='EvenContentPage', frames=[even_frame], onPage=page_drawer.cover_and_content_pages),
-                PageTemplate(id='FinalPage', frames=[Frame(0, 0, letter[0], letter[1])], onPage=page_drawer.final_page_background)
-            ]
+            # Create page drawer with margin information
+            page_drawer = PageDrawer(
+                cover_path or "", title_bg_path or "", blurred_cover_path or "", 
+                full_page_image_path, book_title, author_name,
+                inner_margin, outer_margin, top_bottom_margin
+            )
 
-            if full_page_image_path:
-                page_templates.append(PageTemplate(id='FullImagePage', frames=[Frame(0, 0, letter[0], letter[1])], onPage=page_drawer.full_image_page_background))
+            # Create document with page templates
+            doc = BaseDocTemplate(pdf_path, pagesize=letter)
 
-            doc.addPageTemplates(page_templates)
+            # Define frames for different page types
+            content_frame_odd = Frame(inner_margin, top_bottom_margin, frame_width, frame_height, id='content_odd')
+            content_frame_even = Frame(outer_margin, top_bottom_margin, frame_width, frame_height, id='content_even')
+            title_frame = Frame(inch, inch, letter[0] - 2*inch, letter[1] - 2*inch, id='title')
+            full_frame = Frame(0, 0, letter[0], letter[1], id='full')
 
-            conversion_status[conversion_id]['progress'] = 45
-            conversion_status[conversion_id]['message'] = 'Assembling document content...'
+            # Define page templates
+            cover_template = PageTemplate(id='CoverPage', frames=[full_frame], onPage=page_drawer.cover_and_content_pages)
+            title_template = PageTemplate(id='TitlePage', frames=[title_frame], onPage=page_drawer.title_page_background)
+            odd_template = PageTemplate(id='OddContentPage', frames=[content_frame_odd], onPage=page_drawer.cover_and_content_pages)
+            even_template = PageTemplate(id='EvenContentPage', frames=[content_frame_even], onPage=page_drawer.cover_and_content_pages)
+            full_image_template = PageTemplate(id='FullImagePage', frames=[full_frame], onPage=page_drawer.full_image_page_background)
+            final_template = PageTemplate(id='FinalPage', frames=[title_frame], onPage=page_drawer.final_page_background)
+
+            doc.addPageTemplates([cover_template, title_template, odd_template, even_template, full_image_template, final_template])
+
+            conversion_status[conversion_id]['progress'] = 60
+            conversion_status[conversion_id]['message'] = 'Generating PDF content...'
 
             # Build story
-            story = self.build_story(doc, book_title, author_name, book_description, toc_items,
-                                     content_map, image_map, font_size, line_spacing, bool(full_page_image_path),
-                                     frame_width, frame_height)
+            story = self.build_story(
+                doc, book_title, author_name, book_description, toc_items, content_map,
+                image_map, font_size, line_spacing, bool(full_page_image_path),
+                frame_width, frame_height
+            )
 
-            conversion_status[conversion_id]['progress'] = 85
-            conversion_status[conversion_id]['message'] = 'Generating PDF...'
+            conversion_status[conversion_id]['progress'] = 80
+            conversion_status[conversion_id]['message'] = 'Finalizing PDF...'
 
-            # Generate PDF
+            # Build PDF
             doc.build(story)
 
-            conversion_status[conversion_id]['progress'] = 95
-            conversion_status[conversion_id]['message'] = 'Counting PDF pages...'
-
-            # Count PDF pages
-            page_count = self.count_pdf_pages(pdf_filename)
-
-            # Cleanup temp files except the final PDF
-            files_to_clean = [epub_path, cover_path, title_bg_path, blurred_cover_path, full_page_image_path]
-            self.cleanup_temp_files(files_to_clean, temp_dir)
+            # Count pages
+            page_count = self.count_pdf_pages(pdf_path)
 
             conversion_status[conversion_id] = {
                 'status': 'completed',
                 'progress': 100,
-                'message': f'PDF generation complete! ({page_count} pages)',
-                'pdf_path': pdf_filename,
+                'message': f'Conversion completed successfully! ({page_count} pages)',
+                'pdf_path': pdf_path,
                 'book_title': book_title,
                 'page_count': page_count,
                 'created_at': datetime.now()
@@ -532,137 +534,77 @@ EPUB to PDF Converter"""
             }
 
 
-@converter_bp.route('/convert-and-email', methods=['POST'])
-def start_conversion_and_email():
-    """Start EPUB to PDF conversion and send via email"""
-    try:
-        data = request.get_json()
-
-        # Validate required fields
-        if not data or not data.get('epub_url'):
-            return jsonify({'error': 'EPUB URL is required'}), 400
-            
-        if not data.get('email'):
-            return jsonify({'error': 'Email address is required'}), 400
-
-        # Generate unique conversion ID
-        conversion_id = str(uuid.uuid4())
-        recipient_email = data.get('email')
-
-        # Start conversion and email in background thread
-        converter = EpubToPdfConverter()
-        thread = threading.Thread(
-            target=converter.convert_epub_to_pdf_and_email,
-            args=(conversion_id, data, recipient_email)
-        )
-        thread.daemon = True
-        thread.start()
-
-        return jsonify({
-            'conversion_id': conversion_id,
-            'message': f'Conversion started, PDF will be sent to {recipient_email}'
-        }), 202
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
+# Flask routes
 @converter_bp.route('/convert', methods=['POST'])
-def start_conversion():
-    """Start EPUB to PDF conversion"""
+def convert_epub():
     try:
-        data = request.get_json()
-
-        # Validate required fields
-        if not data or not data.get('epub_url'):
-            return jsonify({'error': 'EPUB URL is required'}), 400
-
-        # Generate unique conversion ID
         conversion_id = str(uuid.uuid4())
-
-        # Start conversion in background thread
+        params = request.get_json()
+        
         converter = EpubToPdfConverter()
-        thread = threading.Thread(
-            target=converter.convert_epub_to_pdf,
-            args=(conversion_id, data)
-        )
-        thread.daemon = True
+        thread = threading.Thread(target=converter.convert_epub_to_pdf, args=(conversion_id, params))
         thread.start()
-
-        return jsonify({
-            'conversion_id': conversion_id,
-            'message': 'Conversion started successfully'
-        }), 202
-
+        
+        return jsonify({'conversion_id': conversion_id, 'status': 'started'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@converter_bp.route('/convert-and-email', methods=['POST'])
+def convert_and_email():
+    try:
+        conversion_id = str(uuid.uuid4())
+        data = request.get_json()
+        params = data.get('params', {})
+        recipient_email = data.get('email')
+        
+        if not recipient_email:
+            return jsonify({'error': 'Email address is required'}), 400
+        
+        converter = EpubToPdfConverter()
+        thread = threading.Thread(target=converter.convert_epub_to_pdf_and_email, args=(conversion_id, params, recipient_email))
+        thread.start()
+        
+        return jsonify({'conversion_id': conversion_id, 'status': 'started'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-@converter_bp.route('/status/<conversion_id>', methods=['GET'])
-def get_conversion_status(conversion_id):
-    """Get conversion status"""
-    if conversion_id not in conversion_status:
-        return jsonify({'error': 'Conversion not found'}), 404
-
-    status = conversion_status[conversion_id].copy()
-    # Remove file path from response for security
-    if 'pdf_path' in status:
-        del status['pdf_path']
-
+@converter_bp.route('/status/<conversion_id>')
+def get_status(conversion_id):
+    status = conversion_status.get(conversion_id, {'status': 'not_found'})
     return jsonify(status)
 
-
-@converter_bp.route('/download/<conversion_id>', methods=['GET'])
+@converter_bp.route('/download/<conversion_id>')
 def download_pdf(conversion_id):
-    """Download generated PDF"""
-    if conversion_id not in conversion_status:
-        return jsonify({'error': 'Conversion not found'}), 404
-
-    status = conversion_status[conversion_id]
-    if status['status'] != 'completed':
-        return jsonify({'error': 'Conversion not completed'}), 400
-
-    pdf_path = status.get('pdf_path')
-    if not pdf_path or not os.path.exists(pdf_path):
+    status = conversion_status.get(conversion_id)
+    if not status or status['status'] != 'completed':
+        return jsonify({'error': 'Conversion not completed or not found'}), 404
+    
+    pdf_path = status['pdf_path']
+    if not os.path.exists(pdf_path):
         return jsonify({'error': 'PDF file not found'}), 404
-
+    
     book_title = status.get('book_title', 'converted_book')
     safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
+    
+    return send_file(pdf_path, as_attachment=True, download_name=f"{safe_title}.pdf")
 
-    return send_file(
-        pdf_path,
-        as_attachment=True,
-        download_name=f"{safe_title}.pdf",
-        mimetype='application/pdf'
-    )
-
-
-# Cleanup old conversions periodically (simple implementation)
+# Cleanup old conversions (run periodically)
 def cleanup_old_conversions():
-    """Remove conversion records older than 1 hour"""
-    cutoff_time = datetime.now() - timedelta(hours=1)
+    cutoff_time = datetime.now() - timedelta(hours=24)
     to_remove = []
-
-    for conv_id, status in conversion_status.items():
+    for conversion_id, status in conversion_status.items():
         if status.get('created_at', datetime.now()) < cutoff_time:
-            # Also cleanup the PDF file if it exists
+            # Clean up files
             if 'pdf_path' in status and os.path.exists(status['pdf_path']):
                 try:
                     os.remove(status['pdf_path'])
-                    # Try to remove the temp directory if empty
+                    # Also remove the temp directory if empty
                     temp_dir = os.path.dirname(status['pdf_path'])
-                    if os.path.exists(temp_dir):
+                    if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                         os.rmdir(temp_dir)
-                except OSError:
+                except:
                     pass
-            to_remove.append(conv_id)
-
-    for conv_id in to_remove:
-        del conversion_status[conv_id]
-
-
-@converter_bp.route('/cleanup', methods=['POST'])
-def manual_cleanup():
-    """Manual cleanup endpoint for old conversions"""
-    cleanup_old_conversions()
-    return jsonify({'message': 'Cleanup completed'})
+            to_remove.append(conversion_id)
+    
+    for conversion_id in to_remove:
+        del conversion_status[conversion_id]
