@@ -398,9 +398,9 @@ EPUB to PDF Converter"""
             line_spacing = float(params.get('line_spacing', 1.5))
             
             # ** NEW MARGIN PARAMETERS **
-            inner_margin = float(params.get('inner_margin', 1.25)) * inch
-            outer_margin = float(params.get('outer_margin', 0.75)) * inch
-            top_bottom_margin = float(params.get('top_bottom_margin', 1.0)) * inch
+            inner_margin = float(params.get('inner_margin', 0.75)) * inch
+            outer_margin = float(params.get('outer_margin', 1.20)) * inch
+            top_bottom_margin = float(params.get('top_bottom_margin', 0.75)) * inch
 
             conversion_status[conversion_id]['progress'] = 5
             conversion_status[conversion_id]['message'] = 'Fetching EPUB file...'
