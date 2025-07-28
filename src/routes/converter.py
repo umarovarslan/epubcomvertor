@@ -28,6 +28,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 import PyPDF2
+from zipfile import BadZipFile # Import BadZipFile
 
 converter_bp = Blueprint("converter", __name__)
 
@@ -436,7 +437,25 @@ EPUB to PDF Converter"""
             epub_path = os.path.join(temp_dir, "book.epub")
             with open(epub_path, "wb") as f:
                 f.write(response.content)
-            book = epub.read_epub(epub_path)
+            
+            try:
+                book = epub.read_epub(epub_path)
+            except BadZipFile as e:
+                conversion_status[conversion_id] = {
+                    "status": "error",
+                    "progress": 0,
+                    "message": f"The EPUB file is corrupted or not a valid ZIP archive: {str(e)}",
+                    "created_at": datetime.now()
+                }
+                return
+            except Exception as e:
+                conversion_status[conversion_id] = {
+                    "status": "error",
+                    "progress": 0,
+                    "message": f"Failed to read EPUB file: {str(e)}",
+                    "created_at": datetime.now()
+                }
+                return
 
             conversion_status[conversion_id]["progress"] = 15
             conversion_status[conversion_id]["message"] = "Processing EPUB content..."
@@ -539,11 +558,18 @@ EPUB to PDF Converter"""
                 "created_at": datetime.now()
             }
 
+        except requests.exceptions.RequestException as e:
+            conversion_status[conversion_id] = {
+                "status": "error",
+                "progress": 0,
+                "message": f"Failed to download EPUB file: {str(e)}",
+                "created_at": datetime.now()
+            }
         except Exception as e:
             conversion_status[conversion_id] = {
                 "status": "error",
                 "progress": 0,
-                "message": f"An error occurred: {str(e)}",
+                "message": f"An unexpected error occurred during conversion: {str(e)}",
                 "created_at": datetime.now()
             }
 
