@@ -15,7 +15,8 @@ from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file
 from ebooklib import epub, ITEM_DOCUMENT, ITEM_IMAGE
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
+import warnings
 from PIL import Image, ImageFilter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
@@ -29,6 +30,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 import PyPDF2
 from zipfile import BadZipFile # Import BadZipFile
+
+# Filter out MarkupResemblesLocatorWarning from BeautifulSoup
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 converter_bp = Blueprint("converter", __name__)
 
@@ -325,23 +329,47 @@ EPUB to PDF Converter"""
         # Table of contents
         toc_page_content = [Paragraph("Содержание", h1_style), Spacer(1, 0.25*inch)]
         chapter_content_story = []
-        toc_links = []
-
-        # Iterate through all document items, not just TOC items
+        
+        # Generate TOC from all document items that are considered chapters/content
+        # This ensures a comprehensive TOC even if book.toc is incomplete
+        generated_toc_items = []
         for item in doc.book.get_items_of_type(ITEM_DOCUMENT):
-            # Skip if it's a navigation file or similar non-content item
+            if item.is_chapter or item.is_content:
+                # Attempt to get a meaningful title for the TOC entry
+                chapter_title = item.title if hasattr(item, 'title') and item.title else item.get_name()
+                if chapter_title:
+                    # Clean up title for display in TOC
+                    clean_title = BeautifulSoup(chapter_title, 'html.parser').get_text(strip=True)
+                    # Use item.get_name() as the href target for internal links
+                    generated_toc_items.append((clean_title, item.get_name()))
+
+        for i, (title, href_target) in enumerate(generated_toc_items):
+            # Use href_target directly as the bookmark key
+            # The bookmark is created by ReportLab when a Paragraph with a 'name' attribute is added to the story.
+            # The link in the TOC should point to this name.
+            toc_page_content.append(Paragraph(f'<link href="#{href_target}">{title}</link>', toc_style))
+            toc_page_content.append(Spacer(1, 0.1 * inch))
+
+        # Process all document items for content
+        for item in doc.book.get_items_of_type(ITEM_DOCUMENT):
             if item.is_chapter or item.is_content:
                 chapter_html = item.get_content()
                 if chapter_html:
-                    soup = BeautifulSoup(chapter_html, "html.parser")
+                    soup = BeautifulSoup(chapter_html, 'html.parser')
                     
-                    # Add chapter title if available (from TOC or inferred)
+                    # Add chapter title and anchor for linking from TOC
                     chapter_title = item.title if hasattr(item, 'title') and item.title else item.get_name()
                     if chapter_title:
+                        # Ensure unique anchor name for each chapter
+                        anchor_name = item.get_name() # Use item name as anchor
+                        clean_chapter_title = BeautifulSoup(chapter_title, 'html.parser').get_text(strip=True)
                         chapter_content_story.append(PageBreak())
-                        chapter_content_story.append(Paragraph(chapter_title, h1_style))
+                        # Add the anchor using the 'name' attribute in a Paragraph
+                        chapter_content_story.append(Paragraph(f'<a name="{anchor_name}"/><b>{clean_chapter_title}</b>', h1_style))
+                        chapter_content_story.append(Spacer(1, 0.2 * inch))
 
-                    for tag in soup.find_all(["p", "img", "h1", "h2", "h3", "h4", "h5", "h6"]):
+                    # Extract and add paragraphs, images, and other headings
+                    for tag in soup.find_all(["p", "img", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li"]):
                         if tag.name == "p" and tag.get_text(strip=True):
                             chapter_content_story.append(Paragraph(tag.get_text(strip=True), body_style))
                             chapter_content_story.append(Spacer(1, 0.1 * inch))
@@ -381,10 +409,12 @@ EPUB to PDF Converter"""
                                     chapter_content_story.append(Spacer(1, 0.2 * inch))
                                 except Exception:
                                     pass  # Skip problematic images
-
-        # Add TOC links based on the original toc_items (which might be limited)
-        for title, key in toc_links:
-            toc_page_content.append(Paragraph(f'<a href="#{key}">{title}</a>', toc_style))
+                        elif tag.name in ["ul", "ol"]:
+                            list_style = ParagraphStyle("ListText", parent=body_style, leftIndent=inch*0.25)
+                            for li in tag.find_all("li"):
+                                prefix = "• " if tag.name == "ul" else f"{li.find_previous_siblings('li').__len__() + 1}. "
+                                chapter_content_story.append(Paragraph(prefix + li.get_text(strip=True), list_style))
+                                chapter_content_story.append(Spacer(1, 0.05 * inch))
 
         story.extend(toc_page_content)
         story.extend(chapter_content_story)
@@ -430,13 +460,19 @@ EPUB to PDF Converter"""
             conversion_status[conversion_id]["message"] = "Fetching EPUB file..."
 
             # Fetch EPUB
-            response = requests.get(epub_url, timeout=60)
-            response.raise_for_status()
-
-            temp_dir = tempfile.mkdtemp()
-            epub_path = os.path.join(temp_dir, "book.epub")
-            with open(epub_path, "wb") as f:
-                f.write(response.content)
+            # Handle local file paths for testing
+            if epub_url.startswith("file://"):
+                epub_path = epub_url[len("file://"):]
+                if not os.path.exists(epub_path):
+                    raise FileNotFoundError(f"Local EPUB file not found: {epub_path}")
+                temp_dir = os.path.dirname(epub_path) # Use the same directory for temp files
+            else:
+                response = requests.get(epub_url, timeout=60)
+                response.raise_for_status()
+                temp_dir = tempfile.mkdtemp()
+                epub_path = os.path.join(temp_dir, "book.epub")
+                with open(epub_path, "wb") as f:
+                    f.write(response.content)
             
             try:
                 book = epub.read_epub(epub_path)
