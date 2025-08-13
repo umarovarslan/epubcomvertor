@@ -20,7 +20,7 @@ from PIL import Image, ImageFilter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
                                 Spacer, NextPageTemplate, PageBreak, Image as ReportLabImage,
-                                ListFlowable, ListItem, Table, TableStyle)
+                                ListFlowable, ListItem, Table, TableStyle, KeepInFrame)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
@@ -218,10 +218,14 @@ EPUB to PDF Converter"""
             
             elif element.name == 'img' and element.get('src'):
                 # Handle images
-                img_src_base = os.path.basename(element['src'])
-                if img_src_base in image_map:
+                img_src = element['src']
+                # Try to match image by basename or full path
+                img_key = img_src
+                if img_key not in image_map:
+                    img_key = os.path.basename(img_src)
+                if img_key in image_map:
                     try:
-                        img_data = io.BytesIO(image_map[img_src_base])
+                        img_data = io.BytesIO(image_map[img_key])
                         with Image.open(img_data) as pil_img:
                             img_width, img_height = pil_img.size
 
@@ -245,7 +249,7 @@ EPUB to PDF Converter"""
                         flowables.append(rl_image)
                         flowables.append(Spacer(1, 0.2 * inch))
                     except Exception as e:
-                        logging.warning(f"Error processing image: {e}")
+                        logging.warning(f"Error processing image {img_key}: {e}")
             
             elif element.name == 'div':
                 # Handle divs by recursively processing their content
@@ -301,7 +305,8 @@ EPUB to PDF Converter"""
                     row_data = []
                     for cell in row.find_all(['td', 'th']):
                         cell_text = cell.get_text(strip=True)
-                        row_data.append(Paragraph(cell_text, body_style))
+                        formatted_text = self.process_inline_elements(cell, body_style)
+                        row_data.append(Paragraph(formatted_text, body_style))
                     if row_data:
                         table_data.append(row_data)
                 
@@ -319,7 +324,7 @@ EPUB to PDF Converter"""
                 # Handle code blocks
                 text = element.get_text()
                 if text:
-                    code_style = ParagraphStyle('Code', parent=body_style, fontName='Courier', fontSize=font_size-2, leading=leading)
+                    code_style = ParagraphStyle('Code', parent=body_style, fontName='Courier', fontSize=body_style.fontSize-2, leading=body_style.leading)
                     flowables.append(Paragraph(text.replace('\n', '<br/>'), code_style))
                     flowables.append(Spacer(1, 0.2 * inch))
             
@@ -551,7 +556,7 @@ EPUB to PDF Converter"""
                 if item.get_type() == ITEM_DOCUMENT:
                     content_map[item.get_name()] = item.get_content().decode('utf-8', errors='replace')
             
-            image_map = {os.path.basename(item.get_name()): item.get_content() 
+            image_map = {item.get_name(): item.get_content() 
                          for item in book.get_items_of_type(ITEM_IMAGE)}
 
             conversion_status[conversion_id]['progress'] = 25
