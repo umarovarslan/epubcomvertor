@@ -15,7 +15,7 @@ from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file
 from ebooklib import epub, ITEM_DOCUMENT, ITEM_IMAGE
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from PIL import Image, ImageFilter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
@@ -91,24 +91,29 @@ class PageDrawer:
 
 class EpubToPdfConverter:
     def __init__(self):
-        # Register DejaVu Sans font (we'll need to include this font file)
+        # Register DejaVu Sans font
         font_path = self.get_font_path()
         if font_path and os.path.exists(font_path):
             pdfmetrics.registerFont(TTFont('DejaVu-Sans', font_path))
+            pdfmetrics.registerFont(TTFont('DejaVu-Sans-Bold', font_path.replace("Sans.ttf", "Sans-Bold.ttf")))
+            pdfmetrics.registerFont(TTFont('DejaVu-Sans-Italic', font_path.replace("Sans.ttf", "Sans-Oblique.ttf")))
+            pdfmetrics.registerFont(TTFont('DejaVu-Sans-BoldItalic', font_path.replace("Sans.ttf", "Sans-BoldOblique.ttf")))
+            pdfmetrics.registerFontFamily('DejaVu-Sans', normal='DejaVu-Sans', bold='DejaVu-Sans-Bold', italic='DejaVu-Sans-Italic', boldItalic='DejaVu-Sans-BoldItalic')
         else:
-            # Fallback to system fonts
-            pdfmetrics.registerFont(TTFont('DejaVu-Sans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+            # Fallback to system fonts if DejaVu is not found
+            pdfmetrics.registerFont(TTFont('DejaVu-Sans', 'Helvetica'))
 
     def get_font_path(self):
         """Try to find DejaVu Sans font in common locations"""
         possible_paths = [
             '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-            '/System/Library/Fonts/DejaVuSans.ttf',
+            '/System/Library/Fonts/Supplemental/DejaVuSans.ttf',
             os.path.join(os.path.dirname(__file__), '..', 'static', 'fonts', 'DejaVuSans.ttf')
         ]
         for path in possible_paths:
             if os.path.exists(path):
                 return path
+        print("Warning: DejaVuSans.ttf not found, formatting may be incorrect. Using Helvetica fallback.")
         return None
 
     def count_pdf_pages(self, pdf_path):
@@ -140,7 +145,6 @@ EPUB to PDF Converter"""
         if not email_body or email_body.strip() == "":
             email_body = self.get_default_email_body()
         
-        # Replace placeholders with actual values
         processed_body = email_body.replace("{book_title}", str(book_title))
         processed_body = processed_body.replace("{page_count}", str(page_count))
         
@@ -149,32 +153,26 @@ EPUB to PDF Converter"""
     def send_email_with_pdf(self, recipient_email, pdf_path, book_title, page_count, custom_email_body=None):
         """Send PDF via email with custom email body support"""
         try:
-            # Email configuration - using Gmail SMTP as example
             # In production, these should be environment variables
             smtp_server = "smtp.gmail.com"
             smtp_port = 587
             sender_email = "mr.umaroff@gmail.com"  # Replace with actual sender email
             sender_password = "mhwb iwfn epsc glnt"  # Replace with actual app password
             
-            # Create message
             msg = MIMEMultipart()
             msg['From'] = sender_email
             msg['To'] = recipient_email
             msg['Subject'] = f"Your converted PDF: {book_title}"
             
-            # Process email body with custom content or use default
             email_body = self.process_email_body(custom_email_body, book_title, page_count)
-            
             msg.attach(MIMEText(email_body, 'plain'))
             
-            # Attach PDF
             with open(pdf_path, 'rb') as f:
                 pdf_attachment = MIMEApplication(f.read(), _subtype='pdf')
                 safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
                 pdf_attachment.add_header('Content-Disposition', 'attachment', filename=f"{safe_title}.pdf")
                 msg.attach(pdf_attachment)
             
-            # Send email
             server = smtplib.SMTP(smtp_server, smtp_port)
             server.starttls()
             server.login(sender_email, sender_password)
@@ -191,22 +189,17 @@ EPUB to PDF Converter"""
     def convert_epub_to_pdf_and_email(self, conversion_id, params, recipient_email):
         """Convert EPUB to PDF and send via email"""
         try:
-            # Validate email first
             try:
                 validate_email(recipient_email)
             except EmailNotValidError:
                 conversion_status[conversion_id] = {
-                    'status': 'error',
-                    'progress': 0,
-                    'message': 'Invalid email address provided',
-                    'created_at': datetime.now()
+                    'status': 'error', 'progress': 0,
+                    'message': 'Invalid email address provided', 'created_at': datetime.now()
                 }
                 return
 
-            # First do the regular conversion
             self.convert_epub_to_pdf(conversion_id, params)
             
-            # Check if conversion was successful
             if conversion_status[conversion_id]['status'] == 'completed':
                 conversion_status[conversion_id]['progress'] = 95
                 conversion_status[conversion_id]['message'] = 'Sending PDF via email...'
@@ -215,10 +208,8 @@ EPUB to PDF Converter"""
                 book_title = conversion_status[conversion_id]['book_title']
                 page_count = conversion_status[conversion_id]['page_count']
                 
-                # Get custom email body from params
                 custom_email_body = params.get('email_body', None)
                 
-                # Send email with custom body
                 if self.send_email_with_pdf(recipient_email, pdf_path, book_title, page_count, custom_email_body):
                     conversion_status[conversion_id]['message'] = f'PDF sent successfully to {recipient_email}! ({page_count} pages)'
                     conversion_status[conversion_id]['progress'] = 100
@@ -230,10 +221,8 @@ EPUB to PDF Converter"""
                     
         except Exception as e:
             conversion_status[conversion_id] = {
-                'status': 'error',
-                'progress': 0,
-                'message': f'An error occurred: {str(e)}',
-                'created_at': datetime.now()
+                'status': 'error', 'progress': 0,
+                'message': f'An error occurred: {str(e)}', 'created_at': datetime.now()
             }
 
     def flatten_toc(self, toc_list):
@@ -263,109 +252,168 @@ EPUB to PDF Converter"""
                 return image_input
             else:
                 raise FileNotFoundError(f"Image file not found: {image_input}")
+    
+    # NEW --- Helper function to convert BS4 tags to ReportLab rich text
+    def _get_rich_text_from_tag(self, tag):
+        """Recursively traverses a BeautifulSoup tag to build a ReportLab-compatible XML string."""
+        content = ''
+        if not hasattr(tag, 'contents'):
+            return html.escape(str(tag))
 
-    def build_story(self, doc, book_title, author_name, book_description, toc_items, content_map,
+        for child in tag.contents:
+            if isinstance(child, NavigableString):
+                content += html.escape(str(child))
+            else:
+                # Map common HTML tags to ReportLab's rich text tags
+                tag_name = child.name
+                if tag_name in ['strong', 'b']:
+                    tag_name = 'b'
+                elif tag_name in ['em', 'i']:
+                    tag_name = 'i'
+                elif tag_name in ['u']:
+                    tag_name = 'u'
+                else: # For other tags like span, etc., just get their content without the tag itself.
+                    content += self._get_rich_text_from_tag(child)
+                    continue
+
+                content += f'<{tag_name}>{self._get_rich_text_from_tag(child)}</{tag_name}>'
+        return content
+
+    # NEW --- Helper function to parse a single chapter's HTML into ReportLab flowables
+    def _parse_html_chapter(self, chapter_html, styles, image_map, frame_width, frame_height):
+        """Parses a chapter's HTML and returns a list of ReportLab flowables."""
+        soup = BeautifulSoup(chapter_html, 'html.parser')
+        story = []
+
+        if not soup.body:
+            return []
+
+        # Process all direct block-level children of the body tag
+        for tag in soup.body.find_all(True, recursive=False):
+            text = self._get_rich_text_from_tag(tag)
+            if not text.strip() and tag.name != 'img':
+                continue
+            
+            # Handle different HTML tags
+            if tag.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                story.append(Paragraph(text, styles[tag.name.upper()]))
+                story.append(Spacer(1, 0.15 * inch))
+            elif tag.name in ['p', 'div', 'blockquote']:
+                style = styles['Blockquote'] if tag.name == 'blockquote' else styles['BodyText']
+                story.append(Paragraph(text, style))
+                story.append(Spacer(1, 0.05 * inch))
+            elif tag.name in ['ul', 'ol']:
+                list_style = styles['BodyText']
+                for i, li in enumerate(tag.find_all('li', recursive=False), 1):
+                    li_text = self._get_rich_text_from_tag(li)
+                    prefix = f'{i}. ' if tag.name == 'ol' else '&bull; '
+                    story.append(Paragraph(prefix + li_text, list_style, leftIndent=inch*0.25))
+            elif tag.name == 'pre':
+                story.append(Paragraph(text, styles['Preformatted']))
+            elif tag.name == 'img' and tag.get('src'):
+                img_src_base = os.path.basename(tag['src'])
+                if img_src_base in image_map:
+                    try:
+                        img_data = io.BytesIO(image_map[img_src_base])
+                        with Image.open(img_data) as pil_img:
+                            img_width, img_height = pil_img.size
+                        
+                        V_BUFFER = 1 * inch
+                        max_width = frame_width
+                        max_height = frame_height - V_BUFFER
+
+                        display_width, display_height = img_width, img_height
+                        if display_width > max_width or display_height > max_height:
+                            scale_ratio = min(max_width / display_width, max_height / display_height)
+                            display_width *= scale_ratio
+                            display_height *= scale_ratio
+                        
+                        img_data.seek(0)
+                        rl_image = ReportLabImage(img_data, width=display_width, height=display_height)
+                        story.append(rl_image)
+                        story.append(Spacer(1, 0.2 * inch))
+                    except Exception as e:
+                        print(f"Skipping problematic image {img_src_base}: {e}")
+
+        return story
+
+    # MODIFIED --- The core function to build the PDF story, now uses the spine
+    def build_story(self, book, book_title, author_name, book_description,
                     image_map, font_size, line_spacing, has_full_page_image,
                     frame_width, frame_height):
         story = []
         styles = getSampleStyleSheet()
         leading = font_size * line_spacing
 
-        body_style = ParagraphStyle('BodyText', parent=styles['Normal'], fontName='DejaVu-Sans',
-                                      fontSize=font_size, leading=leading, alignment=TA_JUSTIFY)
-        h1_style = ParagraphStyle('H1', parent=styles['h1'], fontName='DejaVu-Sans',
-                                    fontSize=20, leading=24, spaceAfter=12, alignment=TA_CENTER)
-        toc_style = ParagraphStyle('TOC', parent=styles['Normal'], fontName='DejaVu-Sans',
-                                     fontSize=14, leading=18, leftIndent=inch*0.25)
-        title_page_title_style = ParagraphStyle('TitlePageTitle', parent=styles['h1'], fontName='DejaVu-Sans',
-                                                  fontSize=30, textColor=colors.black, alignment=TA_CENTER)
-        title_page_author_style = ParagraphStyle('TitlePageAuthor', parent=styles['Normal'], fontName='DejaVu-Sans',
-                                                   fontSize=18, textColor=colors.black, alignment=TA_CENTER, spaceBefore=12)
-        description_style = ParagraphStyle('Description', parent=body_style, textColor=colors.white,
-                                             backColor=colors.Color(0,0,0,0.6), alignment=TA_CENTER,
-                                             borderPadding=20, borderRadius=15)
+        # Define styles for various HTML elements
+        base_style_args = {'fontName': 'DejaVu-Sans', 'fontSize': font_size, 'leading': leading}
+        styles.add(ParagraphStyle('BodyText', parent=styles['Normal'], alignment=TA_JUSTIFY, **base_style_args))
+        styles.add(ParagraphStyle('H1', parent=styles['h1'], fontName='DejaVu-Sans', fontSize=20, leading=24, spaceAfter=12, alignment=TA_CENTER))
+        styles.add(ParagraphStyle('H2', parent=styles['h2'], fontName='DejaVu-Sans', fontSize=18, leading=22, spaceAfter=10))
+        styles.add(ParagraphStyle('H3', parent=styles['h3'], fontName='DejaVu-Sans', fontSize=16, leading=20, spaceAfter=8))
+        styles.add(ParagraphStyle('H4', parent=styles['h4'], fontName='DejaVu-Sans', fontSize=14, leading=18, spaceAfter=6))
+        styles.add(ParagraphStyle('Blockquote', parent=styles['BodyText'], leftIndent=inch*0.25, rightIndent=inch*0.25))
+        styles.add(ParagraphStyle('Preformatted', parent=styles['Code'], fontName='Courier', fontSize=10))
+        styles.add(ParagraphStyle('TOC', parent=styles['Normal'], fontName='DejaVu-Sans', fontSize=14, leading=18, leftIndent=inch*0.25))
+        styles.add(ParagraphStyle('TitlePageTitle', parent=styles['h1'], fontName='DejaVu-Sans', fontSize=30, textColor=colors.black, alignment=TA_CENTER))
+        styles.add(ParagraphStyle('TitlePageAuthor', parent=styles['Normal'], fontName='DejaVu-Sans', fontSize=18, textColor=colors.black, alignment=TA_CENTER, spaceBefore=12))
+        styles.add(ParagraphStyle('Description', parent=styles['BodyText'], textColor=colors.white, backColor=colors.Color(0,0,0,0.6), alignment=TA_CENTER, borderPadding=20, borderRadius=15))
 
-        # Title page
+        # 1. Title Page
         story.append(NextPageTemplate('TitlePage'))
         story.append(PageBreak())
-
         title_page_content = [
             Spacer(1, 3*inch),
-            Paragraph(book_title, title_page_title_style),
+            Paragraph(book_title, styles['TitlePageTitle']),
             Spacer(1, 0.25*inch),
-            Paragraph(f"<i>{author_name}</i>", title_page_author_style)
+            Paragraph(f"<i>{author_name}</i>", styles['TitlePageAuthor'])
         ]
         story.append(KeepInFrame(letter[0], letter[1], title_page_content, vAlign='TOP'))
         
-        # Set up alternating page templates for the main content
+        # 2. Set up main content page templates
         story.append(NextPageTemplate(['OddContentPage', 'EvenContentPage']))
         story.append(PageBreak())
 
-        # Table of contents
-        toc_page_content = [Paragraph("Содержание", h1_style), Spacer(1, 0.25*inch)]
-        chapter_content_story = []
-        toc_links = []
+        # 3. Table of Contents
+        toc_items = self.flatten_toc(book.toc)
+        toc_map = {item.href.split('#')[0]: f"toc_entry_{i}" for i, item in enumerate(toc_items)}
+        story.append(Paragraph("Содержание", styles['H1']))
+        story.append(Spacer(1, 0.25*inch))
+        for item in toc_items:
+            bookmark_key = toc_map.get(item.href.split('#')[0])
+            if bookmark_key:
+                story.append(Paragraph(f'<a href="#{bookmark_key}">{item.title}</a>', styles['TOC']))
+        
+        # 4. Main Content from Spine
+        # CRITICAL CHANGE: Iterate over book.spine to get all content in order
+        spine_items = [book.get_item_with_href(href) for href, _ in book.spine]
+        for item in spine_items:
+            if item.get_type() == ITEM_DOCUMENT:
+                story.append(PageBreak())
+                
+                # Check if this chapter is in the TOC to add an anchor for linking
+                bookmark_key = toc_map.get(item.get_name())
+                if bookmark_key:
+                    story.append(Paragraph(f'<a name="{bookmark_key}"/>', styles['Normal']))
+                
+                # Parse the chapter's HTML content into ReportLab flowables
+                chapter_html = item.get_content().decode('utf-8', 'ignore')
+                chapter_story = self._parse_html_chapter(
+                    chapter_html, styles, image_map, frame_width, frame_height
+                )
+                story.extend(chapter_story)
 
-        for i, item in enumerate(toc_items):
-            bookmark_key = f'toc_entry_{i}'
-            toc_links.append((item.title, bookmark_key))
-            chapter_content_story.append(PageBreak())
-            title_with_anchor = f'<a name="{bookmark_key}"/>{item.title}'
-            chapter_content_story.append(Paragraph(title_with_anchor, h1_style))
-
-            chapter_html = content_map.get(item.href.split('#')[0])
-            if chapter_html:
-                soup = BeautifulSoup(chapter_html, 'html.parser')
-                for tag in soup.find_all(['p', 'img']):
-                    if tag.name == 'p' and tag.get_text(strip=True):
-                        chapter_content_story.append(Paragraph(tag.get_text(strip=True), body_style))
-                        chapter_content_story.append(Spacer(1, 0.1 * inch))
-                    elif tag.name == 'img' and tag.get('src'):
-                        img_src_base = os.path.basename(tag['src'])
-                        if img_src_base in image_map:
-                            try:
-                                img_data = io.BytesIO(image_map[img_src_base])
-                                with Image.open(img_data) as pil_img:
-                                    img_width, img_height = pil_img.size
-
-                                V_BUFFER = 1 * inch
-                                max_width = frame_width
-                                max_height = frame_height - V_BUFFER
-
-                                display_width = img_width
-                                display_height = img_height
-
-                                if display_width > max_width or display_height > max_height:
-                                    width_ratio = max_width / display_width
-                                    height_ratio = max_height / display_height
-                                    scale_ratio = min(width_ratio, height_ratio)
-
-                                    display_width = display_width * scale_ratio
-                                    display_height = display_height * scale_ratio
-
-                                img_data.seek(0)
-                                rl_image = ReportLabImage(img_data, width=display_width, height=display_height)
-                                chapter_content_story.append(rl_image)
-                                chapter_content_story.append(Spacer(1, 0.2 * inch))
-                            except Exception:
-                                pass  # Skip problematic images
-
-        for title, key in toc_links:
-            toc_page_content.append(Paragraph(f'<a href="#{key}">{title}</a>', toc_style))
-
-        story.extend(toc_page_content)
-        story.extend(chapter_content_story)
-
+        # 5. Optional Full Image Page
         if has_full_page_image:
             story.append(NextPageTemplate('FullImagePage'))
             story.append(PageBreak())
 
-        # Final page
+        # 6. Final Page with Description
         story.append(NextPageTemplate('FinalPage'))
         story.append(PageBreak())
         final_page_content = [
             Spacer(1, (letter[1] / 2) - 2*inch),
-            Paragraph(book_description, description_style)
+            Paragraph(book_description, styles['Description'])
         ]
         story.append(KeepInFrame(letter[0] - 2*inch, letter[1], final_page_content, hAlign='CENTER', vAlign='MIDDLE'))
 
@@ -383,29 +431,23 @@ EPUB to PDF Converter"""
         """Main conversion logic"""
         try:
             conversion_status[conversion_id] = {
-                'status': 'processing',
-                'progress': 0,
-                'message': 'Starting conversion...',
-                'created_at': datetime.now()
+                'status': 'processing', 'progress': 0,
+                'message': 'Starting conversion...', 'created_at': datetime.now()
             }
 
-            # Extract parameters
             epub_url = params.get('epub_url')
             cover_input = params.get('cover_input', '')
             title_page_bg_input = params.get('title_page_bg_input', '')
             full_page_image_input = params.get('full_page_image_input', '')
-            font_size = int(params.get('font_size', 13))
+            font_size = int(params.get('font_size', 12)) # Adjusted default size
             line_spacing = float(params.get('line_spacing', 1.5))
-            
-            # ** NEW MARGIN PARAMETERS **
             inner_margin = float(params.get('inner_margin', 0.75)) * inch
-            outer_margin = float(params.get('outer_margin', 1.20)) * inch
+            outer_margin = float(params.get('outer_margin', 1.0)) * inch # Adjusted default
             top_bottom_margin = float(params.get('top_bottom_margin', 0.75)) * inch
 
             conversion_status[conversion_id]['progress'] = 5
             conversion_status[conversion_id]['message'] = 'Fetching EPUB file...'
 
-            # Fetch EPUB
             response = requests.get(epub_url, timeout=60)
             response.raise_for_status()
 
@@ -418,30 +460,24 @@ EPUB to PDF Converter"""
             conversion_status[conversion_id]['progress'] = 15
             conversion_status[conversion_id]['message'] = 'Processing EPUB content...'
 
-            # Extract metadata
-            book_title, author_name, book_description = "Unknown Title", "Unknown Author", "No description found."
-            if book.get_metadata('DC', 'title'):
-                book_title = book.get_metadata('DC', 'title')[0][0]
-            if book.get_metadata('DC', 'creator'):
-                author_name = book.get_metadata('DC', 'creator')[0][0]
+            book_title = "Unknown Title"
+            author_name = "Unknown Author"
+            book_description = "No description found."
+            if book.get_metadata('DC', 'title'): book_title = book.get_metadata('DC', 'title')[0][0]
+            if book.get_metadata('DC', 'creator'): author_name = book.get_metadata('DC', 'creator')[0][0]
             if book.get_metadata('DC', 'description'):
                 raw_desc = book.get_metadata('DC', 'description')[0][0]
                 book_description = html.unescape(re.sub('<[^<]+?>', '', raw_desc))
 
-            # Map content and images
-            toc_items = self.flatten_toc(book.toc)
-            content_map = {item.get_name(): item.get_content() for item in book.get_items_of_type(ITEM_DOCUMENT)}
             image_map = {os.path.basename(item.get_name()): item.get_content() for item in book.get_items_of_type(ITEM_IMAGE)}
 
             conversion_status[conversion_id]['progress'] = 25
             conversion_status[conversion_id]['message'] = 'Preparing images...'
 
-            # Process images
             cover_path = self.get_image_path(cover_input, "cover.jpg", temp_dir) if cover_input else None
             title_bg_path = self.get_image_path(title_page_bg_input, "title_bg.jpg", temp_dir) if title_page_bg_input else None
             full_page_image_path = self.get_image_path(full_page_image_input, "full_page_image.jpg", temp_dir) if full_page_image_input else None
 
-            # Create blurred cover if cover exists
             blurred_cover_path = None
             if cover_path and os.path.exists(cover_path):
                 blurred_cover_path = os.path.join(temp_dir, "blurred_cover.jpg")
@@ -452,14 +488,12 @@ EPUB to PDF Converter"""
             conversion_status[conversion_id]['progress'] = 35
             conversion_status[conversion_id]['message'] = 'Building PDF structure...'
 
-            # Build PDF
             safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
             pdf_filename = os.path.join(temp_dir, f"{safe_title}.pdf")
 
             doc = BaseDocTemplate(pdf_filename, pagesize=letter)
             page_width, page_height = letter
 
-            # Calculate frame dimensions based on new margins
             frame_width = page_width - inner_margin - outer_margin
             frame_height = page_height - (2 * top_bottom_margin)
 
@@ -472,7 +506,6 @@ EPUB to PDF Converter"""
                 top_bottom_margin=top_bottom_margin
             )
             
-            # ** DEFINE FRAMES AND PAGE TEMPLATES FOR MIRRORED MARGINS **
             odd_frame = Frame(inner_margin, top_bottom_margin, frame_width, frame_height, id='odd_frame')
             even_frame = Frame(outer_margin, top_bottom_margin, frame_width, frame_height, id='even_frame')
 
@@ -492,45 +525,41 @@ EPUB to PDF Converter"""
             conversion_status[conversion_id]['progress'] = 45
             conversion_status[conversion_id]['message'] = 'Assembling document content...'
 
-            # Build story
-            story = self.build_story(doc, book_title, author_name, book_description, toc_items,
-                                     content_map, image_map, font_size, line_spacing, bool(full_page_image_path),
+            story = self.build_story(book, book_title, author_name, book_description,
+                                     image_map, font_size, line_spacing, bool(full_page_image_path),
                                      frame_width, frame_height)
 
             conversion_status[conversion_id]['progress'] = 85
             conversion_status[conversion_id]['message'] = 'Generating PDF...'
 
-            # Generate PDF
             doc.build(story)
 
             conversion_status[conversion_id]['progress'] = 95
             conversion_status[conversion_id]['message'] = 'Counting PDF pages...'
 
-            # Count PDF pages
             page_count = self.count_pdf_pages(pdf_filename)
 
-            # Cleanup temp files except the final PDF
             files_to_clean = [epub_path, cover_path, title_bg_path, blurred_cover_path, full_page_image_path]
             self.cleanup_temp_files(files_to_clean, temp_dir)
 
             conversion_status[conversion_id] = {
-                'status': 'completed',
-                'progress': 100,
+                'status': 'completed', 'progress': 100,
                 'message': f'PDF generation complete! ({page_count} pages)',
-                'pdf_path': pdf_filename,
-                'book_title': book_title,
-                'page_count': page_count,
-                'created_at': datetime.now()
+                'pdf_path': pdf_filename, 'book_title': book_title,
+                'page_count': page_count, 'created_at': datetime.now()
             }
 
         except Exception as e:
+            # Add full traceback for easier debugging
+            import traceback
+            error_message = f'An error occurred: {str(e)}\n{traceback.format_exc()}'
+            print(error_message) # Print error to server logs
             conversion_status[conversion_id] = {
-                'status': 'error',
-                'progress': 0,
-                'message': f'An error occurred: {str(e)}',
-                'created_at': datetime.now()
+                'status': 'error', 'progress': 0,
+                'message': f'An error occurred: {str(e)}', 'created_at': datetime.now()
             }
 
+# ====== API Endpoints (No changes needed below this line) ======
 
 @converter_bp.route('/convert-and-email', methods=['POST'])
 def start_conversion_and_email():
@@ -538,18 +567,15 @@ def start_conversion_and_email():
     try:
         data = request.get_json()
 
-        # Validate required fields
         if not data or not data.get('epub_url'):
             return jsonify({'error': 'EPUB URL is required'}), 400
             
         if not data.get('email'):
             return jsonify({'error': 'Email address is required'}), 400
 
-        # Generate unique conversion ID
         conversion_id = str(uuid.uuid4())
         recipient_email = data.get('email')
 
-        # Start conversion and email in background thread
         converter = EpubToPdfConverter()
         thread = threading.Thread(
             target=converter.convert_epub_to_pdf_and_email,
@@ -573,14 +599,11 @@ def start_conversion():
     try:
         data = request.get_json()
 
-        # Validate required fields
         if not data or not data.get('epub_url'):
             return jsonify({'error': 'EPUB URL is required'}), 400
 
-        # Generate unique conversion ID
         conversion_id = str(uuid.uuid4())
 
-        # Start conversion in background thread
         converter = EpubToPdfConverter()
         thread = threading.Thread(
             target=converter.convert_epub_to_pdf,
@@ -605,7 +628,6 @@ def get_conversion_status(conversion_id):
         return jsonify({'error': 'Conversion not found'}), 404
 
     status = conversion_status[conversion_id].copy()
-    # Remove file path from response for security
     if 'pdf_path' in status:
         del status['pdf_path']
 
@@ -637,28 +659,27 @@ def download_pdf(conversion_id):
     )
 
 
-# Cleanup old conversions periodically (simple implementation)
 def cleanup_old_conversions():
     """Remove conversion records older than 1 hour"""
     cutoff_time = datetime.now() - timedelta(hours=1)
     to_remove = []
 
-    for conv_id, status in conversion_status.items():
+    for conv_id, status in list(conversion_status.items()):
         if status.get('created_at', datetime.now()) < cutoff_time:
-            # Also cleanup the PDF file if it exists
             if 'pdf_path' in status and os.path.exists(status['pdf_path']):
                 try:
+                    temp_dir = os.path.dirname(status['pdf_path'])
                     os.remove(status['pdf_path'])
                     # Try to remove the temp directory if empty
-                    temp_dir = os.path.dirname(status['pdf_path'])
-                    if os.path.exists(temp_dir):
+                    if not os.listdir(temp_dir):
                         os.rmdir(temp_dir)
                 except OSError:
                     pass
             to_remove.append(conv_id)
 
     for conv_id in to_remove:
-        del conversion_status[conv_id]
+        if conv_id in conversion_status:
+            del conversion_status[conv_id]
 
 
 @converter_bp.route('/cleanup', methods=['POST'])
