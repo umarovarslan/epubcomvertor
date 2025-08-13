@@ -14,14 +14,13 @@ from email.mime.application import MIMEApplication
 from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, send_file
-from ebooklib import epub, ITEM_DOCUMENT, ITEM_IMAGE, ITEM_STYLE
-from bs4 import BeautifulSoup, Tag, NavigableString
+from ebooklib import epub, ITEM_DOCUMENT, ITEM_IMAGE
+from bs4 import BeautifulSoup
 from PIL import Image, ImageFilter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
                                 Spacer, NextPageTemplate, PageBreak, Image as ReportLabImage,
-                                ListFlowable, ListItem)
-from reportlab.platypus.flowables import KeepInFrame
+                                ListFlowable, ListItem, Table, TableStyle)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
@@ -188,134 +187,177 @@ EPUB to PDF Converter"""
             logging.error(f"Error sending email: {e}")
             return False
 
-    def _get_inner_html(self, element):
-        """Get inner HTML for ReportLab Paragraph, with adjustments for supported tags"""
-        inner = ''.join(str(c) for c in element.contents)
-        # Replace unsupported tags with supported ones
-        inner = inner.replace('<strong>', '<b>').replace('</strong>', '</b>')
-        inner = inner.replace('<em>', '<i>').replace('</em>', '</i>')
-        inner = inner.replace('<sup>', '<super>').replace('</sup>', '</super>')
-        inner = inner.replace('<sub>', '<sub>').replace('</sub>', '</sub>')
-        # Remove hyperlinks for simplicity (can be enhanced later)
-        inner = re.sub(r'<a\s+[^>]*>', '', inner)
-        inner = inner.replace('</a>', '')
-        return inner
-
-    def _process_element(self, element, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style):
-        """Process a single BeautifulSoup element into flowables"""
+    def process_html_content(self, html_content, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height):
+        """Process HTML content and convert to ReportLab flowables"""
         flowables = []
-        # Add anchor if element has id
-        if element.has_attr('id'):
-            anchor_name = element['id']
-            # Add invisible anchor
-            flowables.append(Paragraph(f'<a name="{anchor_name}"/>', body_style))
-
-        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-            level = int(element.name[1])
-            inner_html = self._get_inner_html(element)
-            if level == 1:
-                style = h1_style
-            elif level == 2:
-                style = h2_style
-            else:
-                style = h3_style
-            flowables.append(Paragraph(inner_html, style))
-            flowables.append(Spacer(1, 0.15 * inch))
-        elif element.name == 'p':
-            inner_html = self._get_inner_html(element)
-            if inner_html.strip():
-                flowables.append(Paragraph(inner_html, body_style))
-                flowables.append(Spacer(1, 0.1 * inch))
-        elif element.name == 'img' and element.get('src'):
-            img_src_base = os.path.basename(element['src'])
-            if img_src_base in image_map:
-                try:
-                    img_data = io.BytesIO(image_map[img_src_base])
-                    with Image.open(img_data) as pil_img:
-                        img_width, img_height = pil_img.size
-                    V_BUFFER = 1 * inch
-                    max_width = frame_width
-                    max_height = frame_height - V_BUFFER
-                    display_width = min(img_width, max_width)
-                    display_height = min(img_height, max_height)
-                    if display_width / img_width < display_height / img_height:
-                        display_height = img_height * (display_width / img_width)
-                    else:
-                        display_width = img_width * (display_height / img_height)
-                    img_data.seek(0)
-                    rl_image = ReportLabImage(img_data, width=display_width, height=display_height)
-                    flowables.append(rl_image)
-                    flowables.append(Spacer(1, 0.2 * inch))
-                except Exception as e:
-                    logging.warning(f"Error processing image: {e}")
-        elif element.name in ['ul', 'ol']:
-            list_items = []
-            for li in element.find_all('li', recursive=False):
-                li_inner = self._get_inner_html(li)
-                if li_inner.strip():
-                    list_items.append(ListItem(Paragraph(li_inner, body_style), leftIndent=20))
-            if list_items:
-                bullet_type = 'bullet' if element.name == 'ul' else '1'
-                flowables.append(ListFlowable(list_items, bulletType=bullet_type))
-                flowables.append(Spacer(1, 0.2 * inch))
-        elif element.name == 'blockquote':
-            inner_html = self._get_inner_html(element)
-            if inner_html.strip():
-                flowables.append(Paragraph(inner_html, quote_style))
-                flowables.append(Spacer(1, 0.1 * inch))
-        elif element.name == 'br':
-            flowables.append(Spacer(1, 0.1 * inch))
-        elif element.name == 'hr':
-            flowables.append(Spacer(1, 0.3 * inch))
-            flowables.append(Paragraph("―" * 50, body_style))
-            flowables.append(Spacer(1, 0.3 * inch))
-        elif element.name in ['div', 'span']:
-            # Recurse into children
-            flowables.extend(self._process_children(element.children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style))
-        else:
-            # Fallback for other elements: use inner HTML to preserve formatting
-            inner_html = self._get_inner_html(element)
-            if inner_html.strip():
-                flowables.append(Paragraph(inner_html, body_style))
-                flowables.append(Spacer(1, 0.1 * inch))
-        return flowables
-
-    def _process_children(self, children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style):
-        """Process a list of child nodes"""
-        flowables = []
-        for child in children:
-            if isinstance(child, Tag):
-                flowables.extend(self._process_element(child, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style))
-            elif isinstance(child, NavigableString) and child.strip():
-                flowables.append(Paragraph(str(child).strip(), body_style))
-                flowables.append(Spacer(1, 0.1 * inch))
-        return flowables
-
-    def process_html_content(self, html_content, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style):
-        """Process HTML content recursively into ReportLab flowables"""
         soup = BeautifulSoup(html_content, 'html.parser')
-        flowables = []
-        body = soup.body
-        if body:
-            flowables = self._process_children(body.children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style)
-        else:
-            flowables = self._process_children(soup.children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style)
+        
+        # Process all elements in order
+        for element in soup.find_all(True):
+            if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                # Handle headings
+                level = int(element.name[1])
+                text = element.get_text(strip=True)
+                if text:
+                    if level == 1:
+                        flowables.append(Paragraph(text, h1_style))
+                    elif level == 2:
+                        flowables.append(Paragraph(text, h2_style))
+                    else:
+                        flowables.append(Paragraph(text, h3_style))
+                    flowables.append(Spacer(1, 0.15 * inch))
+            
+            elif element.name == 'p':
+                # Handle paragraphs
+                text = element.get_text(strip=True)
+                if text:
+                    # Preserve inline formatting
+                    formatted_text = self.process_inline_elements(element, body_style)
+                    flowables.append(Paragraph(formatted_text, body_style))
+                    flowables.append(Spacer(1, 0.1 * inch))
+            
+            elif element.name == 'img' and element.get('src'):
+                # Handle images
+                img_src_base = os.path.basename(element['src'])
+                if img_src_base in image_map:
+                    try:
+                        img_data = io.BytesIO(image_map[img_src_base])
+                        with Image.open(img_data) as pil_img:
+                            img_width, img_height = pil_img.size
+
+                        V_BUFFER = 1 * inch
+                        max_width = frame_width
+                        max_height = frame_height - V_BUFFER
+
+                        display_width = img_width
+                        display_height = img_height
+
+                        if display_width > max_width or display_height > max_height:
+                            width_ratio = max_width / display_width
+                            height_ratio = max_height / display_height
+                            scale_ratio = min(width_ratio, height_ratio)
+
+                            display_width = display_width * scale_ratio
+                            display_height = display_height * scale_ratio
+
+                        img_data.seek(0)
+                        rl_image = ReportLabImage(img_data, width=display_width, height=display_height)
+                        flowables.append(rl_image)
+                        flowables.append(Spacer(1, 0.2 * inch))
+                    except Exception as e:
+                        logging.warning(f"Error processing image: {e}")
+            
+            elif element.name == 'div':
+                # Handle divs by recursively processing their content
+                div_flowables = self.process_html_content(str(element), body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height)
+                flowables.extend(div_flowables)
+            
+            elif element.name in ['strong', 'b']:
+                # Handle bold text
+                text = element.get_text(strip=True)
+                if text:
+                    flowables.append(Paragraph(f"<b>{text}</b>", body_style))
+            
+            elif element.name in ['em', 'i']:
+                # Handle italic text
+                text = element.get_text(strip=True)
+                if text:
+                    flowables.append(Paragraph(f"<i>{text}</i>", body_style))
+            
+            elif element.name == 'br':
+                # Handle line breaks
+                flowables.append(Spacer(1, 0.1 * inch))
+            
+            elif element.name == 'hr':
+                # Handle horizontal rules
+                flowables.append(Spacer(1, 0.3 * inch))
+                flowables.append(Paragraph("―" * 50, body_style))
+                flowables.append(Spacer(1, 0.3 * inch))
+            
+            elif element.name == 'blockquote':
+                # Handle blockquotes
+                text = element.get_text(strip=True)
+                if text:
+                    flowables.append(Paragraph(f'<para leftIndent="20" spaceAfter="10"><i>"{text}"</i></para>', body_style))
+            
+            elif element.name in ['ul', 'ol']:
+                # Handle lists
+                list_items = []
+                for li in element.find_all('li', recursive=False):
+                    item_text = li.get_text(strip=True)
+                    if item_text:
+                        formatted_text = self.process_inline_elements(li, body_style)
+                        list_items.append(ListItem(Paragraph(formatted_text, body_style), leftIndent=20))
+                
+                if list_items:
+                    bullet_style = 'bullet' if element.name == 'ul' else '1'
+                    flowables.append(ListFlowable(list_items, bulletType=bullet_style))
+                    flowables.append(Spacer(1, 0.2 * inch))
+            
+            elif element.name == 'table':
+                # Handle tables
+                table_data = []
+                for row in element.find_all('tr'):
+                    row_data = []
+                    for cell in row.find_all(['td', 'th']):
+                        cell_text = cell.get_text(strip=True)
+                        row_data.append(Paragraph(cell_text, body_style))
+                    if row_data:
+                        table_data.append(row_data)
+                
+                if table_data:
+                    table = Table(table_data)
+                    table.setStyle(TableStyle([
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ]))
+                    flowables.append(table)
+                    flowables.append(Spacer(1, 0.2 * inch))
+            
+            elif element.name == 'pre' or element.name == 'code':
+                # Handle code blocks
+                text = element.get_text()
+                if text:
+                    code_style = ParagraphStyle('Code', parent=body_style, fontName='Courier', fontSize=font_size-2, leading=leading)
+                    flowables.append(Paragraph(text.replace('\n', '<br/>'), code_style))
+                    flowables.append(Spacer(1, 0.2 * inch))
+            
+            elif element.name == 'span':
+                # Handle inline spans
+                text = element.get_text(strip=True)
+                if text:
+                    formatted_text = self.process_inline_elements(element, body_style)
+                    flowables.append(Paragraph(formatted_text, body_style))
+            
+            else:
+                # Fallback for other elements
+                text = element.get_text(strip=True)
+                if text:
+                    formatted_text = self.process_inline_elements(element, body_style)
+                    flowables.append(Paragraph(formatted_text, body_style))
+        
         return flowables
 
-    def clean_anchor(self, name):
-        """Clean href to make a valid anchor name"""
-        return re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+    def process_inline_elements(self, element, style):
+        """Process inline HTML elements to preserve formatting"""
+        text = ""
+        for child in element.children:
+            if isinstance(child, str):
+                text += html.escape(child)
+            elif child.name in ['strong', 'b']:
+                text += f"<b>{child.get_text(strip=True)}</b>"
+            elif child.name in ['em', 'i']:
+                text += f"<i>{child.get_text(strip=True)}</i>"
+            elif child.name == 'a' and child.get('href'):
+                text += f'<link href="{child["href"]}">{child.get_text(strip=True)}</link>'
+            elif child.name == 'span':
+                text += child.get_text(strip=True)
+            else:
+                text += child.get_text(strip=True)
+        return text
 
-    def flatten_toc(self, toc_list):
-        flat_list = []
-        for item in toc_list:
-            if isinstance(item, (list, tuple)):
-                flat_list.extend(self.flatten_toc(item))
-            elif isinstance(item, epub.Link):
-                flat_list.append(item)
-        return flat_list
-
-    def build_story(self, doc, book_title, author_name, book_description, book, spine_items, image_map,
+    def build_story(self, doc, book_title, author_name, book_description, spine_items, content_map, image_map,
                     font_size, line_spacing, has_full_page_image, frame_width, frame_height):
         """Build the PDF story from EPUB content"""
         story = []
@@ -334,14 +376,12 @@ EPUB to PDF Converter"""
         toc_style = ParagraphStyle('TOC', parent=styles['Normal'], fontName='DejaVu-Sans',
                                    fontSize=14, leading=18, leftIndent=inch*0.25)
         title_page_title_style = ParagraphStyle('TitlePageTitle', parent=styles['h1'], fontName='DejaVu-Sans',
-                                                fontSize=30, textColor=colors.black, alignment=TA_CENTER)
+                                               fontSize=30, textColor=colors.black, alignment=TA_CENTER)
         title_page_author_style = ParagraphStyle('TitlePageAuthor', parent=styles['Normal'], fontName='DejaVu-Sans',
-                                                 fontSize=18, textColor=colors.black, alignment=TA_CENTER, spaceBefore=12)
+                                                fontSize=18, textColor=colors.black, alignment=TA_CENTER, spaceBefore=12)
         description_style = ParagraphStyle('Description', parent=body_style, textColor=colors.white,
-                                           backColor=colors.Color(0,0,0,0.6), alignment=TA_CENTER,
-                                           borderPadding=20, borderRadius=15)
-        quote_style = ParagraphStyle('Quote', parent=body_style, leftIndent=20, rightIndent=20,
-                                     spaceBefore=10, spaceAfter=10)
+                                          backColor=colors.Color(0,0,0,0.6), alignment=TA_CENTER,
+                                          borderPadding=20, borderRadius=15)
 
         # Title page
         story.append(NextPageTemplate('TitlePage'))
@@ -359,32 +399,43 @@ EPUB to PDF Converter"""
         story.append(PageBreak())
 
         # Table of contents
-        toc_page_content = [Paragraph("Содержание", h1_style), Spacer(1, 0.25*inch)]
-        toc_items = self.flatten_toc(book.toc)
-        for toc_item in toc_items:
-            href = toc_item.href
-            if '#' in href:
-                anchor = href.split('#')[1]
-            else:
-                anchor = self.clean_anchor(href)
-            toc_page_content.append(Paragraph(f'<a href="#{anchor}">{toc_item.title}</a>', toc_style))
-        story.extend(toc_page_content)
+        toc_page_content = [Paragraph("Table of Contents", h1_style), Spacer(1, 0.25*inch)]
+        chapter_content_story = []
+        toc_links = []
 
-        # Process all spine items for full content
-        for item_tuple in book.spine:
-            if isinstance(item_tuple, tuple) and len(item_tuple) >= 1:
-                item_id = item_tuple[0]
-                item = book.get_item_with_id(item_id)
-                if item and item.get_type() == ITEM_DOCUMENT:
-                    # Add anchor for the document start
-                    href = item.get_name()
-                    anchor = self.clean_anchor(href)
-                    story.append(Paragraph(f'<a name="{anchor}"/>', body_style))  # invisible anchor
-                    content_html = item.get_content().decode('utf-8', errors='replace')
-                    chapter_flowables = self.process_html_content(
-                        content_html, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style
-                    )
-                    story.extend(chapter_flowables)
+        # Process each spine item in order
+        for i, item_id in enumerate(spine_items):
+            content_html = content_map.get(item_id)
+            if not content_html:
+                continue
+
+            # Create anchor for TOC
+            anchor_key = f'chapter_{i}'
+            toc_links.append((item_id, anchor_key))
+            
+            # Add chapter title to TOC
+            toc_page_content.append(Paragraph(f'<a href="#{anchor_key}">{item_id}</a>', toc_style))
+            
+            # Process chapter content
+            chapter_content_story.append(PageBreak())
+            chapter_content_story.append(Paragraph(f'<a name="{anchor_key}"/>{item_id}', h1_style))
+            
+            # Process HTML content
+            chapter_flowables = self.process_html_content(
+                content_html, 
+                body_style, 
+                h1_style, 
+                h2_style, 
+                h3_style,
+                image_map,
+                frame_width,
+                frame_height
+            )
+            chapter_content_story.extend(chapter_flowables)
+
+        # Add TOC and content to story
+        story.extend(toc_page_content)
+        story.extend(chapter_content_story)
 
         if has_full_page_image:
             story.append(NextPageTemplate('FullImagePage'))
@@ -402,12 +453,43 @@ EPUB to PDF Converter"""
         return story
 
     def cleanup_temp_files(self, file_paths, temp_dir):
+        """Cleanup temporary files"""
         for path in file_paths:
             if path and path.startswith(temp_dir) and os.path.exists(path):
                 try:
                     os.remove(path)
                 except OSError:
                     pass
+
+    def flatten_toc(self, toc_list):
+        """Flatten EPUB TOC to a list of items"""
+        flat_list = []
+        for item in toc_list:
+            if isinstance(item, (list, tuple)):
+                flat_list.extend(self.flatten_toc(item))
+            elif isinstance(item, epub.Link):
+                flat_list.append(item)
+        return flat_list
+
+    def get_image_path(self, image_input, temp_filename, temp_dir):
+        """Get image path from URL or local file"""
+        if not image_input:
+            return None
+        if image_input.startswith("http"):
+            try:
+                response = requests.get(image_input, timeout=30)
+                response.raise_for_status()
+                image_path = os.path.join(temp_dir, temp_filename)
+                with open(image_path, 'wb') as f:
+                    f.write(response.content)
+                return image_path
+            except requests.RequestException as e:
+                raise IOError(f"Failed to download image {image_input}: {e}")
+        else:
+            if os.path.exists(image_input):
+                return image_input
+            else:
+                raise FileNotFoundError(f"Image file not found: {image_input}")
 
     def convert_epub_to_pdf(self, conversion_id, params):
         """Main conversion logic"""
@@ -427,7 +509,6 @@ EPUB to PDF Converter"""
             font_size = int(params.get('font_size', 13))
             line_spacing = float(params.get('line_spacing', 1.5))
             
-            # Margin parameters
             inner_margin = float(params.get('inner_margin', 0.75)) * inch
             outer_margin = float(params.get('outer_margin', 1.20)) * inch
             top_bottom_margin = float(params.get('top_bottom_margin', 0.75)) * inch
@@ -458,10 +539,18 @@ EPUB to PDF Converter"""
                 raw_desc = book.get_metadata('DC', 'description')[0][0]
                 book_description = html.unescape(re.sub('<[^<]+?>', '', raw_desc))
 
-            # Get spine items
-            spine_items = book.spine
+            # Get spine items in reading order
+            spine_items = []
+            for item in book.spine:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    spine_items.append(item[0])
 
-            # Image map
+            # Map content and images
+            content_map = {}
+            for item in book.get_items():
+                if item.get_type() == ITEM_DOCUMENT:
+                    content_map[item.get_name()] = item.get_content().decode('utf-8', errors='replace')
+            
             image_map = {os.path.basename(item.get_name()): item.get_content() 
                          for item in book.get_items_of_type(ITEM_IMAGE)}
 
@@ -525,8 +614,8 @@ EPUB to PDF Converter"""
             conversion_status[conversion_id]['message'] = 'Assembling document content...'
 
             # Build story
-            story = self.build_story(doc, book_title, author_name, book_description, book, spine_items,
-                                     image_map, font_size, line_spacing, bool(full_page_image_path),
+            story = self.build_story(doc, book_title, author_name, book_description, spine_items,
+                                     content_map, image_map, font_size, line_spacing, bool(full_page_image_path),
                                      frame_width, frame_height)
 
             conversion_status[conversion_id]['progress'] = 85
@@ -613,25 +702,6 @@ EPUB to PDF Converter"""
                 'created_at': datetime.now()
             }
 
-    def get_image_path(self, image_input, temp_filename, temp_dir):
-        if not image_input:
-            return None
-        if image_input.startswith("http"):
-            try:
-                response = requests.get(image_input, timeout=30)
-                response.raise_for_status()
-                image_path = os.path.join(temp_dir, temp_filename)
-                with open(image_path, 'wb') as f:
-                    f.write(response.content)
-                return image_path
-            except requests.RequestException as e:
-                raise IOError(f"Failed to download image {image_input}: {e}")
-        else:
-            if os.path.exists(image_input):
-                return image_input
-            else:
-                raise FileNotFoundError(f"Image file not found: {image_input}")
-
 @converter_bp.route('/convert-and-email', methods=['POST'])
 def start_conversion_and_email():
     """Start EPUB to PDF conversion and send via email"""
@@ -666,7 +736,6 @@ def start_conversion_and_email():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @converter_bp.route('/convert', methods=['POST'])
 def start_conversion():
     """Start EPUB to PDF conversion"""
@@ -697,7 +766,6 @@ def start_conversion():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @converter_bp.route('/status/<conversion_id>', methods=['GET'])
 def get_conversion_status(conversion_id):
     """Get conversion status"""
@@ -710,7 +778,6 @@ def get_conversion_status(conversion_id):
         del status['pdf_path']
 
     return jsonify(status)
-
 
 @converter_bp.route('/download/<conversion_id>', methods=['GET'])
 def download_pdf(conversion_id):
@@ -736,8 +803,6 @@ def download_pdf(conversion_id):
         mimetype='application/pdf'
     )
 
-
-# Cleanup old conversions periodically (simple implementation)
 def cleanup_old_conversions():
     """Remove conversion records older than 1 hour"""
     cutoff_time = datetime.now() - timedelta(hours=1)
@@ -759,7 +824,6 @@ def cleanup_old_conversions():
 
     for conv_id in to_remove:
         del conversion_status[conv_id]
-
 
 @converter_bp.route('/cleanup', methods=['POST'])
 def manual_cleanup():
