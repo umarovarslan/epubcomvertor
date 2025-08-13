@@ -194,6 +194,8 @@ EPUB to PDF Converter"""
         # Replace unsupported tags with supported ones
         inner = inner.replace('<strong>', '<b>').replace('</strong>', '</b>')
         inner = inner.replace('<em>', '<i>').replace('</em>', '</i>')
+        inner = inner.replace('<sup>', '<super>').replace('</sup>', '</super>')
+        inner = inner.replace('<sub>', '<sub>').replace('</sub>', '</sub>')
         # Remove hyperlinks for simplicity (can be enhanced later)
         inner = re.sub(r'<a\s+[^>]*>', '', inner)
         inner = inner.replace('</a>', '')
@@ -271,10 +273,11 @@ EPUB to PDF Converter"""
             # Recurse into children
             flowables.extend(self._process_children(element.children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style))
         else:
-            # Fallback: process children or text
-            text = element.get_text(strip=True)
-            if text:
-                flowables.append(Paragraph(text, body_style))
+            # Fallback for other elements: use inner HTML to preserve formatting
+            inner_html = self._get_inner_html(element)
+            if inner_html.strip():
+                flowables.append(Paragraph(inner_html, body_style))
+                flowables.append(Spacer(1, 0.1 * inch))
         return flowables
 
     def _process_children(self, children, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style):
@@ -284,7 +287,8 @@ EPUB to PDF Converter"""
             if isinstance(child, Tag):
                 flowables.extend(self._process_element(child, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style))
             elif isinstance(child, NavigableString) and child.strip():
-                flowables.append(Paragraph(child.strip(), body_style))
+                flowables.append(Paragraph(str(child).strip(), body_style))
+                flowables.append(Spacer(1, 0.1 * inch))
         return flowables
 
     def process_html_content(self, html_content, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style):
@@ -381,7 +385,6 @@ EPUB to PDF Converter"""
                         content_html, body_style, h1_style, h2_style, h3_style, image_map, frame_width, frame_height, quote_style
                     )
                     story.extend(chapter_flowables)
-                    story.append(PageBreak())  # Optional: break after each section
 
         if has_full_page_image:
             story.append(NextPageTemplate('FullImagePage'))
